@@ -830,6 +830,48 @@ public class ReconDroneEntity extends Entity {
     }
 
     /**
+     * 把一次请求的落点夹到链路距离之内。
+     *
+     * <p>{@return 应该飞过去的落点；{@code null} 表示这一步必须整个拒掉（见下）。
+     *
+     * <p>两端共用这一条规则：客户端在自己的 {@code DroneController#fly} 里用它，是为了让本地
+     * 那一份机体不会先跑出圈再被服务端的回声拽回来（橡皮筋）；服务端在
+     * {@code ModNetwork#handleMove} 里用它，是权威判定，防止改过的客户端直接报一个圈外的坐标。
+     * 两边读的是同一个 {@link #linkRange()}（同步过的模块掩码），所以不需要额外通信。
+     *
+     * <h2>为什么不是"越线就原地不动"</h2>
+     *
+     * <p>一路顶着上限往外飞时，最后那一步如果整包丢掉，机体就永远停在<b>不到</b>链路距离的地方，
+     * 于是画面停在"很糊"而永远走不到"信号丢失"那一档。所以这里把落点<b>投影到球面上</b>，
+     * 让机体正好停在等于 {@code linkRange} 的位置 —— 告警横幅与满屏雪花都是按"距离 ≥ 链路距离"
+     * 触发的，投影之后才会出现。
+     *
+     * <p>{@code null} 的那一种情况：机体已经在圈外（比如操作者自己走远了、或者冲刺撞击把机体
+     * 留在了远端），这时投影等于把它往回拽一大截。宁可整步拒绝 —— 往回飞的那一步不会被拒，
+     * 所以它随时能自己飞回来。
+     *
+     * @param from   机体当前位置
+     * @param target 这一次想去的落点
+     * @param centre 链路的圆心，也就是操作者本体
+     * @param leash  这一架机体的 {@link #linkRange()}
+     */
+    @Nullable
+    public static Vec3 clampToLeash(Vec3 from, Vec3 target, Vec3 centre, double leash) {
+        double wantedSqr = centre.distanceToSqr(target);
+        // 没越线，或者这一步是往回走的：放行。第二个条件让"已经在圈外"的机体还能飞回来。
+        if (wantedSqr <= leash * leash || wantedSqr <= centre.distanceToSqr(from)) {
+            return target;
+        }
+        Vec3 offset = target.subtract(centre);
+        double length = offset.length();
+        if (length < 1.0E-6D) {
+            return target;
+        }
+        Vec3 clamped = centre.add(offset.scale(leash / length));
+        return centre.distanceToSqr(clamped) >= centre.distanceToSqr(from) ? clamped : null;
+    }
+
+    /**
      * {@return the distance at which this airframe's picture starts to break up}
      *
      * <p>Scaled with the leash rather than held at the base figure, so a signal booster moves the
@@ -1432,12 +1474,21 @@ public class ReconDroneEntity extends Entity {
         this.tickRecon(serverLevel);
     }
 
+    /**
+     * {@return 这个操作者现在还算不算这架机体的驾驶员}
+     *
+     * <p>⚠️ <b>这里刻意<b>没有</b>距离条件。</b>曾经有一条 {@code pilot.distanceToSqr(this) <=
+     * linkRange()^2}，效果是"机体一旦飞出链路距离就把玩家从座舱里踢出来"—— 冲刺撞击尤其致命，
+     * 因为那条 run 本来就允许飞出链路（服务端自飞、忽略 leash），于是玩家会在撞击前一刻被弹出
+     * 画面，只剩无人机自己飞完。用户明确不要这个行为（2026-10-17）：超距应该是"飞不出去"，
+     * 由 {@link #clampToLeash} 在移动那一侧拦，而不是断链。链路只在这几种情况下结束：
+     * 玩家自己按 V、机体被回收/击落、换维度。
+     */
     private boolean isPilotValid(ServerPlayer pilot) {
         return pilot.isAlive()
                 && !pilot.isRemoved()
                 && !pilot.isSpectator()
-                && pilot.level() == this.level()
-                && pilot.distanceToSqr(this) <= this.linkRange() * this.linkRange();
+                && pilot.level() == this.level();
     }
 
     /**

@@ -287,14 +287,25 @@ public final class ModNetwork {
 
         // Cosmetic roll is only applied after ordinary flight passes its movement checks.
         drone.setRoll(payload.roll());
-        // The leash is the airframe's own reach, not the base one: a drone carrying signal boosters
-        // is meant to be flown farther out, and this is the only place that decides where the line
-        // actually snaps.
-        if (player.position().distanceToSqr(target)
-                > drone.linkRange() * drone.linkRange()) {
-            drone.disconnectPilot();
+
+        // 链路距离：越线是"飞不出去"，不是把玩家从座舱里踢出来。
+        //
+        // ⚠️ 这里以前是 drone.disconnectPilot() —— 玩家一顶着上限往外飞就被弹出画面，只剩无人机
+        // 自己在天上（冲刺撞击尤其明显，那条 run 本来就允许飞出链路）。用户明确不要这个行为
+        // （2026-10-17）：超距应该拦在移动这一侧，画面继续留着，让"信号丢失"那两档读得出来。
+        //
+        // 夹取规则放在实体上，客户端在自己的本地移动里用同一条（见 DroneController#fly），
+        // 两边读的是同一个 linkRange()（同步过的模块掩码），所以不需要额外通信。
+        // 返回 null 表示这一步整个拒掉（机体已经在圈外、这一步只会把它往回拽），但朝向照旧接受 ——
+        // 顶在圈上的时候玩家还得能转头。
+        Vec3 clamped = ReconDroneEntity.clampToLeash(from, target, player.position(), drone.linkRange());
+        if (clamped == null) {
+            drone.setYRot(payload.yRot());
+            drone.setXRot(payload.xRot());
+            drone.setDeltaMovement(Vec3.ZERO);
             return;
         }
+        target = clamped;
 
         // Blocks are resolved here the same way Entity#move resolves them, by sweeping the
         // airframe's own bounding box along the requested delta. A stock client has already run

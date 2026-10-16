@@ -1182,10 +1182,28 @@ public final class DroneController {
             return;
         }
 
+        Vec3 before = drone.position();
         drone.move(MoverType.SELF, drift);
         if (drone.horizontalCollision || drone.verticalCollision) {
             // Met something solid: drop the coast so the drone does not grind along the wall.
             drift = Vec3.ZERO;
+        }
+
+        // 链路距离：本地这一份机体也不能飞出圈。
+        //
+        // 不夹的话，本地机体先跑出圈、下一 tick 再被服务端的权威位置拽回来，在圈边上抖成橡皮筋。
+        // 规则和服务端是同一条（ReconDroneEntity#clampToLeash），两边读的都是这架机体的
+        // linkRange()，所以本地夹取只是"提前把服务端会做的事做一遍"，不是客户端在替服务端决定。
+        // null = 这一步整个退回去（机体已经在圈外、这一步只会把它往回拽）。
+        if (minecraft.player != null) {
+            Vec3 clamped = ReconDroneEntity.clampToLeash(
+                    before, drone.position(), minecraft.player.position(), drone.linkRange());
+            if (clamped == null) {
+                drone.setPos(before.x, before.y, before.z);
+                drift = Vec3.ZERO;
+            } else if (clamped.distanceToSqr(drone.position()) > 1.0E-9D) {
+                drone.setPos(clamped.x, clamped.y, clamped.z);
+            }
         }
 
         double minY = minecraft.level.getMinBuildHeight() + 0.1D;

@@ -189,9 +189,15 @@ the outcome, so "the check noticed" can be confirmed on its own.
   flight path and keeps scanning, then hovers where it ends up. You can link into it later. A
   thrown drone scans with a wider 150° cone and a 16 block no-aim radius, because it tumbles along
   its arc and a cone tight enough to feel like aiming slides straight past what it just flew over.
-- **Link leash.** If you walk more than 64 blocks away, or the drone is destroyed, or you
-  die, the link drops automatically and your camera returns to your body. Signal modules buy
-  thirty-two blocks each, so a fully boosted leash is 128.
+- **Link leash.** The leash is 64 blocks, and signal modules buy thirty-two each, so a fully
+  boosted one is 128. Going past it does **not** drop the link and it does **not** pull your camera
+  back to your body: the drone simply cannot fly any further out. The last step outward is projected
+  onto the leash sphere, so the airframe comes to rest exactly on the line — which is where the feed
+  whites out and `SIGNAL LOST` appears — and it can always be flown back in, because a step that
+  reduces the distance is never refused. The link itself only ends when you unlink (V), the drone is
+  recalled or destroyed, or you change dimension. The rule lives on the airframe
+  (`ReconDroneEntity#clampToLeash`) and both sides apply it: the server as the authority, the client
+  so its own copy of the drone does not run out and get yanked back.
 - **Server side validation.** Movement is client driven (like the vanilla player) but the
   server clamps the distance per tick, enforces the leash, and requires you to own the drone
   before it will accept a link request. Glow scanning and door opening both run on the server,
@@ -202,8 +208,8 @@ the outcome, so "the check noticed" can be confirmed on its own.
   spraying packets; the sweep is what stops it from claiming to be on the far side of a wall.
   A stock client has already run that exact sweep before sending, so neither check costs it
   anything. Mid charge the packet is still accepted — it carries the aim, which the server clamps
-  onto the run's cone — but the position in it is discarded and the leash check is skipped, since a
-  committed one way run covers far more ground than the link reaches.
+  onto the run's cone — but the position in it is discarded and the leash is skipped, since a
+  committed one way run is meant to reach past the line.
 
 ### The screen
 
