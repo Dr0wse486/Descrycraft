@@ -653,12 +653,17 @@ def write_outputs(output_dir=None):
     faces = []
     for mesh in (body, glow):
         for face in mesh.faces:
+            # No "uv" key: the coordinates already live in the OBJ, and nothing that reads
+            # the manifest wants them.
             faces.append({
                 "group": face["group"],
                 "name": face["name"],
                 "rect": face["rect"],
-                "uv": face["uv"],
                 "colour": face["colour"],
+                # Which sheet this face was packed against. The painters used to
+                # infer it from the component name, which meant every new mesh
+                # needed its glow parts added to a hard-coded set of names.
+                "glow": mesh is glow,
             })
     manifest = {
         "unit": U,

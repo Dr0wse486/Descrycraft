@@ -57,6 +57,12 @@ public class ReconDroneItem extends Item {
             return InteractionResult.PASS;
         }
 
+        // 潜行 + 右键是配置手势，不是部署。放在最前面，否则对着方块按下去会先把机体放出来。
+        if (player.isShiftKeyDown()) {
+            sneakAction(level, player, context.getHand());
+            return InteractionResult.sidedSuccess(level.isClientSide);
+        }
+
         BlockPos target = context.getClickedPos().relative(context.getClickedFace());
         if (!level.getBlockState(target).getCollisionShape(level, target).isEmpty()) {
             return InteractionResult.FAIL;
@@ -101,13 +107,8 @@ public class ReconDroneItem extends Item {
         ItemStack stack = player.getItemInHand(hand);
 
         if (player.isShiftKeyDown()) {
-            ItemStack battery = batteryInOtherHand(player, hand);
-            if (!battery.isEmpty() || !batteryOf(stack).isEmpty()) {
-                if (!level.isClientSide) {
-                    toggleBattery(player, stack, battery);
-                }
-                return InteractionResultHolder.sidedSuccess(stack, level.isClientSide);
-            }
+            sneakAction(level, player, hand);
+            return InteractionResultHolder.sidedSuccess(stack, level.isClientSide);
         }
 
         if (!level.isClientSide) {
@@ -121,6 +122,26 @@ public class ReconDroneItem extends Item {
                     SoundSource.PLAYERS, 0.6F, 1.4F);
         }
         return InteractionResultHolder.sidedSuccess(stack, level.isClientSide);
+    }
+
+    /**
+     * 潜行 + 右键的那一下：手边有电池就装电池，否则打开改装界面。
+     *
+     * <p>两件事共用一个手势是没办法的 —— 能空出来给界面的键位不多，而"潜行 + 对着自己的东西
+     * 右键"本来就是这类交互的惯例。电池优先：它是"往机体上放东西"，比打开一个界面更具体，
+     * 也更不该被误触发。
+     *
+     * <p>拆电池不走这里了：拆的位置在**已经放出去的那架**身上（潜行 + 手持电池右键机体），
+     * 这里只负责把电带上。
+     */
+    private static void sneakAction(Level level, Player player, InteractionHand hand) {
+        ItemStack battery = batteryInOtherHand(player, hand);
+        if (!battery.isEmpty()) {
+            if (!level.isClientSide) {
+                fitBattery(player, player.getItemInHand(hand), battery);
+            }
+            return;
+        }
     }
 
     /** {@return the pack held in the hand that is not holding the drone, or an empty stack} */
@@ -138,22 +159,19 @@ public class ReconDroneItem extends Item {
      * <p>手里拿着电池而机体上已经有一块时，拆下来的是**机体上那块**（连同它剩余的电量），
      * 手里那块原样留着：拆装严格可逆，不会出现"拿 B 装进去结果 A 不见了"。
      */
-    private static void toggleBattery(Player player, ItemStack drone, ItemStack battery) {
+    private static void fitBattery(Player player, ItemStack drone, ItemStack battery) {
+        // 机体上已经有一块时先退还给玩家再装 —— 换电池不该把旧的吞掉。
         ItemStack seated = batteryOf(drone);
-        if (seated.isEmpty()) {
-            setBattery(drone, battery.copyWithCount(1));
-            battery.shrink(1);
-            player.displayClientMessage(
-                    Component.translatable("message.watchcraft.battery_installed"), true);
-            return;
+        if (!seated.isEmpty()) {
+            setBattery(drone, ItemStack.EMPTY);
+            if (!player.getInventory().add(seated)) {
+                player.drop(seated, false);
+            }
         }
-
-        setBattery(drone, ItemStack.EMPTY);
-        if (!player.getInventory().add(seated)) {
-            player.drop(seated, false);
-        }
+        setBattery(drone, battery.copyWithCount(1));
+        battery.shrink(1);
         player.displayClientMessage(
-                Component.translatable("message.watchcraft.battery_removed"), true);
+                Component.translatable("message.watchcraft.battery_installed"), true);
     }
 
     /**

@@ -15,8 +15,8 @@ import org.slf4j.Logger;
  *
  * <p>Two things happen as the drone flies away from its operator: the picture loses definition,
  * and the visor fills up with grain. This class owns the first one - a real defocus of the
- * rendered world - and publishes {@link #amount(double)} so the overlay in {@link DroneHud} can
- * draw the second at exactly the same strength.
+ * rendered world - and publishes {@link #amount(ReconDroneEntity, double)} so the overlay in
+ * {@link DroneHud} can draw the second at exactly the same strength.
  *
  * <p><b>Why the world and not the GUI.</b> {@code GuiGraphics} only fills flat colour. A
  * screen-space imitation can lift the blacks and darken the corners, but it can never soften an
@@ -25,11 +25,9 @@ import org.slf4j.Logger;
  * frame buffer, so the world gets blurred for real and the overlay is left to do the parts that
  * really do belong to it: grain, torn scan lines and the vignette.
  *
- * <p><b>Why there is no shader code here.</b> {@code assets/watchcraft/shaders/post/drone_link.json}
- * is a post chain whose every pass names vanilla's own {@code box_blur} program. That program
- * reads its strength from a {@code Radius} uniform and its direction from {@code BlurDir}, so the
- * whole effect is one JSON file plus a uniform write, and nothing has to be compiled or registered
- * from Java.
+ * <p><b>Why there is no shader code here.</b> Every pass of the chain below names one of vanilla's
+ * own programs, so the whole effect is a JSON file plus a uniform write, and nothing has to be
+ * compiled or registered from Java.
  *
  * <h2>Why this runs at {@code AFTER_LEVEL} instead of through {@code GameRenderer#postEffect}</h2>
  *
@@ -57,32 +55,73 @@ import org.slf4j.Logger;
  * exactly the layering the visor wants: the world goes out of focus, the instruments and the
  * marks stay readable. It also means the engine never touches this chain, so there is no
  * {@code checkEntityPostEffect} reset to fight and nothing to re-assert every frame.
+ *
+ * <h2>Two chains, at two different points in the frame</h2>
+ *
+ * <p>This class owns the defocus and the detonation's radial drag: eight passes in one chain, and
+ * they have to run before {@code doEntityOutline} or the glow gets smeared with the world.
+ *
+ * <p>The visor's grain - the signal breakup's speckle and the detonation's snow - used to be drawn
+ * from {@link DroneHud} as well, one {@code GuiGraphics#fill} per grain, up to sixty thousand of
+ * them on a detonation frame. That was the stutter: the cost was the CPU submitting tens of
+ * thousands of 1x1 quads into the GUI vertex buffer, not the GPU painting them. It now runs as a
+ * single full-screen pass in a chain of its own, driven by {@link DroneNoise} at the GUI stage -
+ * it has to be there, because the grain sits on top of the visor and the instruments while the
+ * defocus sits underneath them. This class only keeps that chain warm
+ * ({@link DroneNoise#prepare()}) and closes it when the link goes down.
+ *
+ * <h2>The chain only runs when it would change the picture</h2>
+ *
+ * <p>The defocus used to be processed unconditionally on every frame the player was piloting, which
+ * is a full-screen cost paid from the moment the link comes up whether or not a single pixel of it
+ * changes anything. It is therefore skipped whenever it would be an identity, and that is not an
+ * approximation: {@code box_blur.fsh} starts with
+ * {@code actualRadius = round(Radius * RadiusMultiplier)} and the six passes are configured with
+ * multipliers of 1.0, 0.5 and 0.25, so below a radius of half a pixel every one of them samples
+ * exactly once - see {@link #BLUR_THRESHOLD}. The radial blur is likewise an identity at zero
+ * strength, so the gate needs both to be at rest.
+ *
+ * <p>Note what is deliberately <b>not</b> here: a guard on {@code minecraft.screen}. An earlier
+ * version had one, on the theory that the world behind a menu is only a backdrop - but the effect
+ * is what the pilot is looking at, and having it vanish the instant ESC is pressed reads as a bug
+ * rather than as a saving. {@code renderLevel} keeps running behind a screen, so the picture the
+ * pilot sees there is the real one and it should keep its treatment. {@link DroneHud#render}
+ * follows the same rule for the snow, and suppresses only the instruments.
  */
 public final class DroneSignal {
 
     private static final Logger LOGGER = LogUtils.getLogger();
 
     /**
-     * Our post chain.
+     * The signal defocus (six {@code box_blur} passes) and the detonation's radial drag (two
+     * {@code radial_blur} passes), in that order.
      *
      * <p>The path is the full path inside the namespace, because that is what {@code PostChain}
      * expects: it reads the file straight off the resource manager rather than going through any
      * shader registry.
      */
-    private static final ResourceLocation EFFECT =
-            ResourceLocation.fromNamespaceAndPath("watchcraft", "shaders/post/drone_link.json");
+    private static final ResourceLocation CHAIN =
+            ResourceLocation.fromNamespaceAndPath("watchcraft", "shaders/post/drone_blur.json");
 
     /**
      * Widest blur radius, in pixels, at full signal loss.
      *
      * <p>The chain runs the radius through three horizontal/vertical pairs at 1.0, 0.5 and 0.25, so
      * the spread that actually lands on screen is roughly twice this. Six is enough to lose a fence
-     * and a tree line without the picture turning into soup, and a radius of zero is an exact
-     * no-op - the shader still samples, but only once per pixel - which is what lets the effect
-     * stay resident at short range instead of being torn down and rebuilt every time the drone
-     * crosses the onset distance.
+     * and a tree line without the picture turning into soup. Below {@link #BLUR_THRESHOLD} the
+     * chain is skipped rather than run at a radius of zero - see the class comment for why that is
+     * the same picture.
      */
     private static float MAX_RADIUS = 6.0F;
+
+    /**
+     * Smallest radius worth running the blur chain for.
+     *
+     * <p>Half a pixel, which is exactly where {@code box_blur}'s {@code round()} stops returning
+     * zero. Anything below it is a guaranteed identity in all six passes, so skipping the chain
+     * there is the same picture for free.
+     */
+    private static final float BLUR_THRESHOLD = 0.5F;
 
     /** 客户端配置载入/热重载后把模糊半径写回镜像。 */
     public static void applyConfig() {
@@ -154,31 +193,41 @@ public final class DroneSignal {
 
         if (!piloting) {
             release();
-            DroneLcd.reset();
+            // 颗粒链子只在操控时才有用，跟着一起收掉；它的交换目标是显存，留着没有意义。
+            DroneNoise.release();
             // A chain that failed to build gets a fresh attempt on the next link.
             broken = false;
             return;
         }
+
+        // 颗粒的链子在这里预建：它的着色器不能等到第一次下雪时才编译，那时候 GUI 顶点
+        // 缓冲已经攒了一半，编译一卡最显眼。构建之后这里只是两次空判断。
+        DroneNoise.prepare();
+
         if (broken) {
             return;
         }
-        if (effect == null && !acquire(minecraft)) {
-            return;
-        }
 
-        resize(minecraft);
-        effect.setUniform("Radius", radiusFor(minecraft, (ReconDroneEntity) camera));
+        ReconDroneEntity drone = (ReconDroneEntity) camera;
+        float radius = radiusFor(minecraft, drone);
         // 引爆瞬间的径向模糊。两遍共用这一个全局量，各自再乘自己那条 pass 的常数
         // （第一遍 1.0、第二遍 0.5，写在链子的 json 里），拖影才是连续的一层而不是一条硬边。
         // 之所以要这么绕：PostChain#setUniform 是对链子里所有 pass 一起设的，没法只设一条。
-        effect.setUniform("BlurAmount", DroneShake.radialBlur());
+        float blurAmount = DroneShake.radialBlur();
 
-        // 液晶滤镜。它和上面的模糊走的是同一条链子、同一个挂点，所以滤的同样只是世界 ——
-        // 发光描边和整个面罩都叠在它上面，依旧是锐的。
-        effect.setUniform("LcdStrength", DroneLcd.strength());
-        effect.setUniform("LcdPitch", DroneLcd.pitch());
-        effect.setUniform("LcdPhase", DroneLcd.advance(partialTicks));
-        effect.setUniform("LcdTime", DroneLcd.time());
+        // 半径低于半像素时六遍 box_blur 全是直通，径向模糊强度为 0 时两遍 radial_blur 也是 ——
+        // 这一帧跑与不跑逐像素等价，所以连链子都不建。引爆期间照跑：爆炸的径向拖影就在这里。
+        if (radius < BLUR_THRESHOLD && blurAmount <= 0.001F) {
+            return;
+        }
+
+        if (effect == null && acquire(minecraft) == null) {
+            return;
+        }
+        resize(minecraft);
+
+        effect.setUniform("Radius", radius);
+        effect.setUniform("BlurAmount", blurAmount);
 
         // Exactly the sequence GameRenderer runs around its own post effect, and the rebind at the
         // end matters: without it the window framebuffer is left bound, and doEntityOutline would
@@ -190,31 +239,37 @@ public final class DroneSignal {
         minecraft.getMainRenderTarget().bindWrite(true);
     }
 
-    private static boolean acquire(Minecraft minecraft) {
+    /**
+     * Builds one chain, or returns {@code null} and logs why.
+     *
+     * <p>The {@code catch} has to be this wide and has to log. The original version caught
+     * {@code IOException | JsonSyntaxException} with a comment saying {@code PostChain} had already
+     * logged the reason - both halves were wrong. {@code PostChain} only throws, and the exception
+     * it throws for a bad pass ({@code ChainedJsonException}) <b>extends {@code IOException}</b>,
+     * so any configuration mistake was swallowed in silence, the chain was latched as broken, and
+     * nothing happened on screen and nothing appeared in the log. Two effects - the signal defocus
+     * and the detonation blur - were missing for days because of it. See
+     * {@code tools/verify_shaders.py}.
+     */
+    private static PostChain acquire(Minecraft minecraft) {
         try {
             effect = new PostChain(
                     minecraft.getTextureManager(),
                     minecraft.getResourceManager(),
                     minecraft.getMainRenderTarget(),
-                    EFFECT);
+                    CHAIN);
             width = -1;
             height = -1;
-            LOGGER.info("Post chain {} built; the visor has signal degradation, detonation blur "
-                    + "and the LCD filter", EFFECT.getPath());
-            return true;
+            LOGGER.info("Post chain {} built; the visor has signal degradation and detonation blur",
+                    CHAIN.getPath());
+            return effect;
         } catch (Exception exception) {
-            // ⚠️ 这里必须抓 Exception 而且必须自己记一笔。原来的写法是
-            // `catch (IOException | JsonSyntaxException)` 加一句"PostChain 已经记过日志了"——
-            // 两半都是错的：PostChain 只抛不记，而它抛的 ChainedJsonException **继承 IOException**，
-            // 于是任何一个配置错误都会被这里静静吞掉，链子被标成 broken，画面里什么都不会发生，
-            // 日志里一个字都没有。整整三个效果（信号劣化、引爆径向模糊、液晶滤镜）就这样消失了很久，
-            // 直到有人问"为什么滤镜没反应"才被发现。见 tools/verify_shaders.py。
             LOGGER.error("Post chain {} failed to build; the drone visor will have no signal "
-                    + "degradation, no detonation blur and no LCD filter this session. "
-                    + "Run `python tools/verify_shaders.py` to find the offending pass.", EFFECT, exception);
+                    + "degradation and no detonation blur this session. Run "
+                    + "`python tools/verify_shaders.py` to find the offending pass.", CHAIN, exception);
             broken = true;
             effect = null;
-            return false;
+            return null;
         }
     }
 

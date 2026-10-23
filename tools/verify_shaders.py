@@ -3,8 +3,8 @@
 This exists because of a bug that cost three features without leaving a trace. `PostChain` throws
 `ChainedJsonException` when a pass declares a uniform the program does not have - and that exception
 is an `IOException`, so `DroneSignal`'s catch swallowed it, latched the chain as broken and said
-nothing. The symptom was that the signal blur, the detonation radial blur and the LCD filter were all
-simply absent, with a clean log. A one line check would have caught it on the day it was written.
+nothing. The symptom was that the signal blur and the detonation radial blur were simply absent,
+with a clean log. A one line check would have caught it on the day it was written.
 
 What is checked, per chain:
 
@@ -61,7 +61,7 @@ class Report:
 
 
 def split_id(name: str) -> tuple[str, str]:
-    """``"watchcraft:lcd"`` -> ``("watchcraft", "lcd")``; a bare name means minecraft."""
+    """``"watchcraft:radial_blur"`` -> ``("watchcraft", "radial_blur")``; a bare name means minecraft."""
     if ":" in name:
         namespace, path = name.split(":", 1)
         return namespace, path

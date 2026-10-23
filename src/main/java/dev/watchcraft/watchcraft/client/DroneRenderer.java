@@ -25,8 +25,15 @@ public class DroneRenderer extends EntityRenderer<ReconDroneEntity> {
     private static final ResourceLocation TEXTURE =
             ResourceLocation.fromNamespaceAndPath(Watchcraft.MOD_ID, "textures/entity/recon_drone.png");
 
-    /** Half the entity's 0.45 block height; the model's origin is its centre. */
-    private static final float MODEL_Y = 0.225F;
+    /**
+     * Half the model's own height, so its centre lands on the entity's centre.
+     *
+     * <p>The mesh is 0.4227 blocks tall, not the 0.45 of the hitbox, so this is deliberately not
+     * {@code bbHeight / 2}: using the hitbox height would leave the skids hanging 1.4 cm above the
+     * ground. {@code tools/prepare_drone_model.py} prints the exact value as {@code MODEL_Y} every
+     * time it rebuilds the mesh - if the model is ever re-scaled, copy the new number from there.
+     */
+    private static final float MODEL_Y = 0.2113F;
 
     /**
      * Which way the airframe leans into a turn, and which way it rolls. Roll is applied about the

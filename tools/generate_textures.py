@@ -71,8 +71,6 @@ BOLT = (86, 94, 104, 255)
 # Manifest colour name -> RGBA, for every name the generator can emit.
 MANIFEST_COLOURS = {name: tuple(rgb) + (255,) for name, rgb in PALETTE.items()}
 
-GLOW_GROUPS = {"gimbal_lens", "tail_light"}
-
 
 class Canvas:
     def __init__(self, width: int, height: int):
@@ -88,19 +86,6 @@ class Canvas:
         for yy in range(y, y + h):
             for xx in range(x, x + w):
                 self.set(xx, yy, colour)
-
-    def shade(self, x: int, y: int, w: int, h: int, colour, amount: int):
-        """Adds deterministic pixel noise so the flat colour reads as hand made pixel art."""
-        r, g, b, a = colour
-        for yy in range(y, y + h):
-            for xx in range(x, x + w):
-                n = ((xx * 73 + yy * 151) % (amount * 2 + 1)) - amount
-                self.set(xx, yy, (
-                    max(0, min(255, r + n)),
-                    max(0, min(255, g + n)),
-                    max(0, min(255, b + n)),
-                    a,
-                ))
 
     def outline(self, x: int, y: int, w: int, h: int, colour):
         for xx in range(x, x + w):
@@ -133,29 +118,37 @@ class Canvas:
 
 # --------------------------------------------------------------------------- entity sheets
 def build_entity_sheet(manifest, glow: bool) -> Canvas:
-    """Paints a sheet straight from the manifest: one UV rectangle per face.
+    """Paints a sheet straight from the manifest: one flat colour per face.
 
-    Each rectangle gets a one pixel inset border. Adjacent faces of a box land
-    in separate rectangles, so those borders meet along every physical edge and
-    read as panel lines - which is what keeps a flat coloured model from
-    looking like painted plastic.
+    Every face still gets its own UV rectangle, but at this face count nothing may be painted
+    *inside* one. The hard-surface model has 6675 body faces, and the rectangles that hold them
+    are tiny - 86% are smaller than 5x5 pixels, and the commonest sizes are 4x3, 2x1 and 1x1. Two
+    earlier passes both broke on that:
 
-    No shading gradient is baked in: the rectangle's V axis follows whichever
-    pair of axes happened to be the face's two largest, so "up" in the texture
-    is not "up" in the world and any directional highlight would land on a
-    different edge for every face.
+    * A one pixel inset border per rectangle was meant to meet along physical edges and read as a
+      panel line. On a 2x2 rectangle the border is three quarters of the face, so instead of panel
+      lines the hull became a grid of dark boxes.
+    * Per pixel value jitter meant to read as hand made pixel art was keyed on absolute sheet
+      coordinates, so all 6675 faces got a different random shade and every mirrored pair differed.
+      That is the other half of why the underside looked asymmetric: the geometry mirrors, the
+      noise did not.
+
+    Both are gone. The sheet is flat colour per material, and the model's own 6893 facets supply
+    every edge and highlight - which is the right division of labour for a hard surface mesh that
+    already has more geometry than the old procedural one had by a factor of twenty six.
+
+    Flat rectangles cannot bleed into their neighbours, because both render types this sheet feeds
+    sample with blur and mipmaps off: {@code RenderType#entityCutout} and {@code RenderType#eyes}
+    are each built on {@code TextureStateShard(texture, false, false)}.
     """
     size = manifest["glow_sheet"] if glow else manifest["sheet"]
     canvas = Canvas(size[0], size[1])
     for face in manifest["faces"]:
-        if (face["group"] in GLOW_GROUPS) != glow:
+        if face["glow"] != glow:
             continue
         x, y, w, h = face["rect"]
         colour = MANIFEST_COLOURS.get(face["colour"], (255, 0, 255, 255))
-        canvas.shade(x, y, w, h, colour, 3 if glow else 5)
-        if w >= 5 and h >= 5:
-            edge = tuple(max(0, c - 26) for c in colour[:3]) + (255,)
-            canvas.outline(x, y, w, h, edge)
+        canvas.fill(x, y, w, h, colour)
     return canvas
 
 

@@ -22,9 +22,11 @@ import org.slf4j.Logger;
 /**
  * Loads the two OBJ meshes that make up the drone and bakes them once.
  *
- * <p>Both meshes are authored offline by {@code tools/generate_drone_mesh.py}: {@code drone.obj}
- * carries the airframe and {@code drone_glow.obj} carries the emissive parts, which live in a
- * separate file so they can be drawn with a different render type and forced to full brightness.
+ * <p>Both meshes are authored offline: {@code drone.obj} carries the airframe and
+ * {@code drone_glow.obj} carries the emissive parts, which live in a separate file so they can be
+ * drawn with a different render type and forced to full brightness. They are produced either by
+ * {@code tools/prepare_drone_model.py} (from the Blender hard-surface model) or by
+ * {@code tools/generate_drone_mesh.py} (the procedural fallback). Both write the same layout.
  *
  * <p>The loader settings are worth spelling out, because two of the four defaults are wrong for
  * an entity:
@@ -44,9 +46,9 @@ import org.slf4j.Logger;
  * <ul>
  *   <li>The airframe uses {@link RenderType#entityCutout}, an ordinary lit type. It multiplies in
  *       the lightmap we pass, so the hull brightens and darkens with the world.</li>
- *   <li>The lens and the tail lamp use {@link RenderType#eyes} - vanilla's additive emissive type,
- *       the same one behind a spider's and an enderman's eyes. It samples <em>no</em> lightmap at
- *       all and blends with {@code ONE, ONE}.</li>
+ *   <li>The camera window, the motor rings and the nose lamp use {@link RenderType#eyes} -
+ *       vanilla's additive emissive type, the same one behind a spider's and an enderman's eyes.
+ *       It samples <em>no</em> lightmap at all and blends with {@code ONE, ONE}.</li>
  * </ul>
  *
  * <p>Passing {@code LightTexture.FULL_BRIGHT} to a lit type is <em>not</em> enough to make a part
@@ -79,16 +81,18 @@ public final class DroneMeshes implements ResourceManagerReloadListener {
      * simply not applied - so this exists purely to turn a silently dead rotor into a log line.
      */
     static final String[] ANIMATED = {
-            "rotor0", "rotor1", "rotor2", "rotor3", "gimbal_yoke", "gimbal_lens",
+            "Rotor_FL", "Rotor_FR", "Rotor_RL", "Rotor_RR", "Gimbal_Lens",
     };
 
     /** Lit type: brightens and darkens with the world. */
     public static final ITextureRenderTypeLookup BODY_LOOKUP = RenderType::entityCutout;
 
     /**
-     * Additive emissive type: {@code ONE, ONE} blending and no lightmap, so the lens and the tail
-     * lamp add their colour on top of whatever is behind them and stay lit at noon and at midnight
-     * alike. Culling is left on, so each pixel takes exactly one additive contribution.
+     * Additive emissive type: {@code ONE, ONE} blending and no lightmap, so the camera window, the
+     * motor rings and the nose lamp add their colour on top of whatever is behind them and stay
+     * lit at noon and at midnight alike. Culling is left on, so each pixel takes exactly one
+     * additive contribution - which is also why an emissive face that points into the hull, like
+     * the motor rings, is never drawn at all.
      */
     public static final ITextureRenderTypeLookup GLOW_LOOKUP = RenderType::eyes;
 
@@ -155,12 +159,16 @@ public final class DroneMeshes implements ResourceManagerReloadListener {
     /**
      * Bakes the model against a throwaway baking context.
      *
-     * <p>The material key has to be {@code "#texture0"} with the hash, because that is literally
-     * the string the {@code map_Kd} line in the MTL resolves to: the OBJ loader hands anything
-     * starting with {@code #} to {@code context.getMaterial} untouched.
+     * <p>The material key {@code "#texture0"} is what the procedural generator's MTL declares
+     * ({@code map_Kd #texture0}); the OBJ loader hands anything starting with {@code #} to
+     * {@code context.getMaterial} untouched, so that key has to be present with the hash for the
+     * fallback mesh to bake. The hard-surface MTL instead names a real texture
+     * ({@code map_Kd watchcraft:entity/recon_drone}), which {@code resolveDirtyMaterial} parses
+     * into a {@link ResourceLocation} directly and never consults this map for - so the map entry
+     * is unused there, and harmless.
      *
-     * <p>The atlas named on the material is never read. {@code ObjModel} bakes every quad against
-     * {@code UnitTextureAtlasSprite} - a 1x1 sprite whose {@code getU}/{@code getV} are the
+     * <p>The atlas named on the material is never read either. {@code ObjModel} bakes every quad
+     * against {@code UnitTextureAtlasSprite} - a 1x1 sprite whose {@code getU}/{@code getV} are the
      * identity - so the only part of the material that survives into the mesh is its texture
      * location, which becomes the {@link RenderType} we hand in at draw time.
      */
@@ -173,8 +181,8 @@ public final class DroneMeshes implements ResourceManagerReloadListener {
     }
 
     /**
-     * Both models are searched, not just the airframe: {@code gimbal_lens} lives in the glow mesh,
-     * so checking only the body would report it missing on every load.
+     * Both models are searched, not just the airframe: a mesh may carry part of the animated
+     * geometry in its own file, so checking only the body could report a present group as missing.
      */
     private static void reportMissingParts(ObjModel body, ObjModel glow) {
         Set<String> names = new HashSet<>(body.getConfigurableComponentNames());

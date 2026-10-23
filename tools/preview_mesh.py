@@ -42,7 +42,11 @@ import paths  # noqa: E402
 # second copy lived here for a while and drifted: it still had the old near
 # black GLASS, so the preview showed a canopy that the real texture no longer
 # painted.
-from generate_drone_mesh import PALETTE, U  # noqa: E402
+from generate_drone_mesh import U  # noqa: E402
+
+# The sheet painter is imported rather than reimplemented, for the same reason: a second copy of
+# the painting loop drifted in exactly the way a second copy always does. See build_sheet below.
+import generate_textures  # noqa: E402
 
 
 # ------------------------------------------------------------------------ PNG
@@ -66,38 +70,28 @@ def write_png(path, width, height, rows):
 
 # ------------------------------------------------------------------- texture
 
-def build_sheet(manifest, groups, size, outline=True):
-    """Paints every face's UV rectangle with its palette colour.
+def build_sheet(manifest, glow):
+    """Paints a sheet exactly the way the game's texture generator does.
 
-    The one-pixel inset border makes the packing legible: if two rects touch,
-    or a rect runs off the sheet, you see it immediately.
+    This used to carry its own copy of the painting loop, with a one pixel inset border at a
+    slightly different threshold (w > 2 here, w >= 5 there) and a slightly different edge colour.
+    That was fine while both were "a border plus some noise" and actively harmful once the game
+    texture went flat: the preview kept drawing a grid of tiles that no longer existed, so it
+    disagreed with the only thing it exists to predict. It now calls the real painter, and the two
+    cannot drift again.
     """
-    width, height = size
-    rows = [bytearray(b"\x20\x20\x20" * width) for _ in range(height)]
-    for face in manifest["faces"]:
-        if (face["group"] in groups) != (size == tuple(manifest["glow_sheet"])):
-            continue
-        x, y, w, h = face["rect"]
-        colour = PALETTE.get(face["colour"], (255, 0, 255))
-        for row in range(y, y + h):
-            if row < 0 or row >= height:
-                continue
-            line = rows[row]
-            for col in range(x, x + w):
-                if col < 0 or col >= width:
-                    continue
-                if outline and w > 2 and h > 2 and (row in (y, y + h - 1) or col in (x, x + w - 1)):
-                    edge = tuple(int(c * 0.62) for c in colour)
-                    line[col * 3:col * 3 + 3] = bytes(edge)
-                else:
-                    line[col * 3:col * 3 + 3] = bytes(colour)
-    return rows
+    canvas = generate_textures.build_entity_sheet(manifest, glow)
+    return [bytes(channel for r, g, b, _ in row for channel in (r, g, b)) for row in canvas.px]
 
 
-def load_texture(manifest, groups, size, scale):
+def sheet_size(manifest, glow):
+    return tuple(manifest["glow_sheet"] if glow else manifest["sheet"])
+
+
+def load_texture(manifest, glow, scale):
     """Builds the sheet at 1:1 and returns (pixels, width, height) upscaled."""
-    rows = build_sheet(manifest, groups, size)
-    width, height = size
+    rows = build_sheet(manifest, glow)
+    width, height = sheet_size(manifest, glow)
     pixels = [bytes(r) for r in rows]
     if scale > 1:
         big = []
@@ -203,15 +197,19 @@ class View:
 LIGHT = unit((-0.45, 0.82, 0.36))
 
 
-def render(faces, textures, view, backdrop, emissive_groups):
+def render(faces, textures, view, backdrop):
     """Rasterises `faces` into one tile.
+
+    `faces` is a list of (component name, corners, emissive) - the flag comes from which OBJ
+    the face was read out of, not from its component name, because the emissive faces of the
+    hard-surface model sit inside the body component.
 
     `textures` maps the emissive flag to a (pixels, width, height) sheet, because the drone's
     emissive parts live on their own texture at their own resolution. Sampling everything from
     the body sheet - which is what this used to do - drew the lens and the tail lamp black, since
     the body sheet deliberately leaves their UV rectangles empty.
 
-    Faces in `emissive_groups` stand in for the mesh the real renderer draws with
+    Emissive faces stand in for the mesh the real renderer draws with
     `RenderType#eyes`: additive blending, no lightmap multiply, and no depth write. All three are
     modelled here, because the gap between "lit" and "additively lit" is the whole reason the
     drone has a second mesh.
@@ -233,11 +231,11 @@ def render(faces, textures, view, backdrop, emissive_groups):
     scale = view.scale
 
     prepared = []
-    for group, corners in faces:
+    for group, corners, emissive in faces:
         world = [tuple(c * scale for c in p) for p, _, _ in corners]
-        prepared.append((group, corners, world))
+        prepared.append((group, corners, world, emissive))
 
-    for group, corners, world in prepared:
+    for group, corners, world, emissive in prepared:
         view_pts = [view.to_view(p) for p in world]
         screen = [view.project(v) for v in view_pts]
 
@@ -253,7 +251,6 @@ def render(faces, textures, view, backdrop, emissive_groups):
         if min(p[2] for p in view_pts) < 0.05:
             continue
 
-        emissive = group in emissive_groups
         tex_pixels, tex_w, tex_h = textures[emissive]
         world_n = unit(cross(sub(world[1], world[0]), sub(world[2], world[0])))
         if emissive:
@@ -348,20 +345,22 @@ def main():
 
     body_verts, body_faces = parse_obj(os.path.join(model_dir, "drone.obj"))
     glow_verts, glow_faces = parse_obj(os.path.join(model_dir, "drone_glow.obj"))
-    faces = body_faces + glow_faces
+    # The emissive flag comes from the file, not from the component name: on the hard-surface
+    # model the cyan lens sits inside the body component, sharing its group with 5555 other faces.
+    faces = ([(group, corners, False) for group, corners in body_faces]
+             + [(group, corners, True) for group, corners in glow_faces])
     vertices = body_verts + glow_verts
 
     # texture sheets, straight from the manifest
-    glow_groups = {"gimbal_lens", "tail_light"}
-    body_tex = load_texture(manifest, glow_groups, tuple(manifest["sheet"]), 1)
-    glow_tex = load_texture(manifest, glow_groups, tuple(manifest["glow_sheet"]), 1)
+    body_tex = load_texture(manifest, False, 1)
+    glow_tex = load_texture(manifest, True, 1)
     # The emissive parts are on the glow sheet, at its own resolution. Every face has to be
     # sampled from the sheet its UVs were packed against, or the glow parts come out black.
     textures = {False: body_tex, True: glow_tex}
     write_png(os.path.join(out_dir, "drone-texture.png"), body_tex[1], body_tex[2],
-              [bytes(r) for r in build_sheet(manifest, glow_groups, tuple(manifest["sheet"]))])
+              build_sheet(manifest, False))
     write_png(os.path.join(out_dir, "drone-glow.png"), glow_tex[1], glow_tex[2],
-              [bytes(r) for r in build_sheet(manifest, glow_groups, tuple(manifest["glow_sheet"]))])
+              build_sheet(manifest, True))
 
     low = [min(v[i] for v in vertices) for i in range(3)]
     high = [max(v[i] for v in vertices) for i in range(3)]
@@ -395,7 +394,7 @@ def main():
         eye = tuple(eye[i] + centre[i] * scale for i in range(3))
         target = tuple(c * scale for c in centre)
         view = View(eye, target, (0.0, 1.0, 0.0), fov, cell, cell, scale)
-        rows = render(faces, textures, view, backdrop, glow_groups)
+        rows = render(faces, textures, view, backdrop)
         tiles.append((label, rows))
         print("rendered %s" % label)
 
