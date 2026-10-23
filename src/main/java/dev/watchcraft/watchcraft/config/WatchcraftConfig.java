@@ -366,10 +366,6 @@ public final class WatchcraftConfig {
 
         public final ModConfigSpec.DoubleValue signalMaxBlurRadius;
 
-        public final ModConfigSpec.BooleanValue lcdEnabled;
-        public final ModConfigSpec.DoubleValue lcdStrength;
-        public final ModConfigSpec.DoubleValue lcdPixelPitch;
-
         public final ModConfigSpec.BooleanValue detonationShakeEnabled;
         public final ModConfigSpec.DoubleValue detonationShakeSeconds;
         public final ModConfigSpec.DoubleValue detonationShakeDisplacement;
@@ -480,26 +476,6 @@ public final class WatchcraftConfig {
             signalMaxBlurRadius = builder
                     .comment("满信号丢失时的最大模糊半径（像素）")
                     .defineInRange("maxBlurRadius", 6.0D, 0.0D, 32.0D);
-            builder.pop();
-
-            builder.comment("液晶滤镜：让无人机的画面看起来是「隔着一块屏幕」，"
-                    + "而不是「一个玩家在天上飞」。只影响操控时的世界画面，"
-                    + "面罩、准星、读数与发光描边都叠在它上面，依旧锐利").push("lcd");
-            lcdEnabled = builder
-                    .comment("总开关。关掉时着色器走单次采样直通，画面回到干净的渲染结果")
-                    .define("enabled", true);
-            lcdStrength = builder
-                    .comment("整体轻重，0~1。1 是设计值：黑矩阵清楚可见，但还不至于看久了眼酸。"
-                            + "0.5 左右是「隐约觉得有块屏」")
-                    .defineInRange("strength", 1.0D, 0.0D, 1.0D);
-            lcdPixelPitch = builder
-                    .comment("一格像素的边长，单位是设备像素。0 表示跟随分辨率"
-                            + "（一格约占屏幕高度的 1/270，钳在 4~8）：1080p 上约 4、"
-                            + "1440p 上约 5、4K 上 8。默认跟随分辨率是有原因的 —— "
-                            + "同一个 4 像素的格子在 4K 上会细到完全看不见。"
-                            + "非 0 就是显式的设备像素值。下限 4：再小一格就是「缝比开口多」，"
-                            + "读起来是百叶窗不是屏幕")
-                    .defineInRange("pixelPitch", 0.0D, 0.0D, 8.0D);
             builder.pop();
 
             builder.comment("引爆瞬间的冲击（只影响驾驶员自己的画面与耳朵）").push("detonation");

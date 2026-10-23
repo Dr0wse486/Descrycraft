@@ -152,9 +152,20 @@ public final class DroneHud {
         long millis = System.currentTimeMillis();
 
         // 引爆之后接管整个画面：这时候剩下的只有雪花，仪表盘、准星、提示条全都让位。
+        //
+        // ⚠️ 这一段刻意排在下面那个"界面守卫"之前。雪花屏不是仪表，它是"画面没了"本身 ——
+        // 玩家按 ESC 的时候，背景应该仍然是一片雪花，而不是忽然露出一个清晰的世界。
+        // （它画在 RenderGuiEvent.Post，而菜单是在那之后才画的，所以雪花天然落在菜单底下，
+        // 观感正是"菜单浮在雪花屏上"。）
         int staticTicks = drone.getStaticTicks();
         if (staticTicks > 0) {
             drawDetonationStatic(graphics, width, height, staticTicks, DroneShake.overlayRamp());
+            return;
+        }
+
+        // 打开背包、暂停菜单或任何界面时，剩下的仪表层不画 —— 和 DroneMarkerOverlay 与
+        // DroneDetectWarning 是同一条规则：这些标记属于"看世界"的那一层，压在容器界面上只会碍事。
+        if (minecraft.screen != null) {
             return;
         }
 
@@ -204,6 +215,15 @@ public final class DroneHud {
      * 再在 0.15 秒里糊死；同时最开头补一记炸白。{@code shakeSeconds} 配成 0 时 {@code ramp}
      * 恒为 1，这里逐字退回从前的行为。
      *
+     * <p>⚠️ <b>颗粒仍然是每 GUI 像素一颗，而且每帧重新掷一次 —— 这两条都别改。</b>曾经为了省帧
+     * 时间把它改成"两像素一颗 + 按住 40 毫秒"，覆盖面积虽然一样，但观感明显变粗、变呆，用户
+     * 当场就退回来了。密而细、并且一直在跳，才是这个效果的样子。
+     *
+     * <p>这两条现在由 {@link DroneNoise} 在 GPU 上兑现：格子按 GUI 像素切，种子每帧换一次，
+     * 灰度和 alpha 的区间与原来逐颗 {@code fill} 的循环逐项一致。于是"每帧最多六万次填充"
+     * 变成了一次全屏绘制，画面不变。想改观感就改 {@code screen_noise.fsh} 里那两个分支的常量，
+     * 别在这里加回循环。
+     *
      * @param remaining 雪花屏还剩多少刻
      * @param ramp      开头渐入的进度，0 到 1
      */
@@ -222,16 +242,13 @@ public final class DroneHud {
 
         RandomSource random = RandomSource.create();
 
-        // 颗粒也跟着爬：先稀稀拉拉地漏，再密到什么都看不见。
+        // 颗粒也跟着爬：先稀稀拉拉地漏，再密到什么都看不见。数量还是按原来那套算，但不再
+        // 逐个 fill —— 换算成"每格 GUI 像素被点亮的概率"，交给一次全屏 pass（见 DroneNoise）。
+        // 雪花屏从每帧最多六万次填充变成一次绘制，卡顿就是从这里消失的。
         double grainRamp = 0.35D + 0.65D * ramp;
         int grains = (int) (Math.min(width * height / 3, 60000) * fade * grainRamp);
-        for (int i = 0; i < grains; i++) {
-            int x = random.nextInt(width);
-            int y = random.nextInt(height);
-            int grey = random.nextInt(256);
-            int alpha = 0x60 + random.nextInt(0xA0);
-            graphics.fill(x, y, x + 1, y + 1, alpha << 24 | grey << 16 | grey << 8 | grey);
-        }
+        DroneNoise.render(graphics, width, height, grainDensity(grains, width, height),
+                System.nanoTime(), true);
         if (fade < 1.0D) {
             return;
         }
@@ -323,22 +340,28 @@ public final class DroneHud {
         // The bulk of the effect. Dense and fine: at a typical GUI scale a "pixel" here is two or
         // three real pixels, which is what keeps it reading as noise rather than as confetti.
         //
-        // 颗粒数是"几乎看不见"的主力，所以上限也跟着 severity 一起放大：1080p 下 amount=1
-        // 本来就已经顶到 14000 了，不放开的话加重幅度等于零。放大系数单独收窄到 1.5 ——
-        // 每颗粒子都是一次 fill 调用，2 万多次已经够重，再往上换来的密度远不如它花掉的帧时间。
+        // 颗粒数还是按原来的公式算，但已经不再逐颗 fill：这个数只用来换算成"每格 GUI 像素
+        // 被点亮的概率"，颗粒本身由一次全屏 pass 生成（见 DroneNoise）。所以上限可以继续跟着
+        // severity 放大到 1.5 倍，而不必再拿帧时间换密度。
         int grainCap = (int) (14000 * Math.min(severity, 1.5D));
         int grains = Math.min((int) (width * height * 0.012D * amount), grainCap);
-        for (int i = 0; i < grains; i++) {
-            int x = random.nextInt(width);
-            int y = random.nextInt(height);
-            int alpha = 0x16 + random.nextInt(0x48);
-            // Bright and dark speckle both, in a narrow range: highlights on their own look like
-            // dust rather than like noise.
-            int grey = random.nextBoolean()
-                    ? 0xE4 + random.nextInt(0x1C)
-                    : 0x0C + random.nextInt(0x1C);
-            graphics.fill(x, y, x + 1, y + 1, alpha << 24 | grey << 16 | grey << 8 | grey);
+        DroneNoise.render(graphics, width, height, grainDensity(grains, width, height),
+                millis / 40L, false);
+    }
+
+    /**
+     * 把"在 W×H 个格子里随机撒 N 颗"换算成"每一格被点亮的概率"。
+     *
+     * <p>旧的循环允许同一格被抽中多次，真正亮起来的格子数不是 N，而是
+     * {@code W*H * (1 - e^(-N/(W*H)))}。GPU 版每格只掷一次，所以要用这个唯一覆盖概率，
+     * 而不是 N/(W*H) —— 后者在密集的引爆雪花里会明显偏稀。{@code expm1} 在小密度下也精确。
+     */
+    private static double grainDensity(int grains, int width, int height) {
+        long cells = (long) width * height;
+        if (grains <= 0 || cells <= 0L) {
+            return 0.0D;
         }
+        return -Math.expm1(-(double) grains / cells);
     }
 
     /**

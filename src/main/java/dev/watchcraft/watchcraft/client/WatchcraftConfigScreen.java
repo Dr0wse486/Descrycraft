@@ -183,9 +183,6 @@ public final class WatchcraftConfigScreen extends Screen {
         addDouble(WatchcraftConfig.CLIENT.chargeAimTau, "watchcraft.config.charge.aimTau", "s");
         addDouble(WatchcraftConfig.CLIENT.chargeAimGain, "watchcraft.config.charge.aimGain", "x");
         addDouble(WatchcraftConfig.CLIENT.signalMaxBlurRadius, "watchcraft.config.signal.maxBlurRadius", "px");
-        addToggle(WatchcraftConfig.CLIENT.lcdEnabled, "watchcraft.config.lcd.enabled");
-        addDouble(WatchcraftConfig.CLIENT.lcdStrength, "watchcraft.config.lcd.strength", "");
-        addDouble(WatchcraftConfig.CLIENT.lcdPixelPitch, "watchcraft.config.lcd.pixelPitch", "px");
     }
 
     private void buildRoll() {

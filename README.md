@@ -2,7 +2,6 @@
 
 ![Minecraft](https://img.shields.io/badge/Minecraft-1.21.1-62b47a?style=flat-square)
 ![NeoForge](https://img.shields.io/badge/NeoForge-21.1.251-e8a33d?style=flat-square)
-![License](https://img.shields.io/badge/license-MIT-4b8bbe?style=flat-square)
 
 **Surveillance tools for Minecraft 1.21.1 + NeoForge.**
 
@@ -141,7 +140,7 @@ the outcome, so "the check noticed" can be confirmed on its own.
   **4 blocks**, so 52 is a quarter gone, 56 half, 60 three quarters, and at **64** — the end of
   the leash — the feed whites out and a blinking `SIGNAL LOST` banner takes over.
   The defocus is a **real** one: the world is blurred before the GUI is drawn, by a post chain
-  (`assets/watchcraft/shaders/post/drone_link.json`) whose passes all name vanilla's own
+  (`assets/watchcraft/shaders/post/drone_blur.json`) whose passes all name vanilla's own
   `box_blur` program, with the radius driven off the same 0-to-1 degradation figure the overlay
   uses. Nothing is compiled or registered from Java — it is one JSON file and a uniform write.
   It runs at `RenderLevelStageEvent.AFTER_LEVEL`, which is *before* `doEntityOutline` composites
@@ -150,6 +149,16 @@ the outcome, so "the check noticed" can be confirmed on its own.
   into the main target at all, only into the outline buffer, so what you actually see is a thin
   white edge — blurring it drops its peak brightness by an order of magnitude and the mark
   collapses into a dark smear.
+  The chain is only processed when it would change the picture. `box_blur.fsh` opens with
+  `actualRadius = round(Radius * RadiusMultiplier)` and all six passes are configured with a
+  multiplier of 1.0, 0.5 or 0.25, so below a radius of half a pixel every one of them is an exact
+  identity — see `DroneSignal.BLUR_THRESHOLD`. The radial blur is likewise an identity at zero
+  strength, so the gate needs both to be at rest before the chain is skipped.
+  **Nothing here is gated on a GUI screen being open.** `renderLevel` keeps running behind a menu,
+  so the pilot is still looking at the real picture and it keeps its treatment; pressing ESC must
+  not wipe the effect. Only the instruments stand down — see `client/DroneHud`.
+  The grain on top of that blur is a **second** chain, and it has to run at a different point in
+  the frame — see below.
   The overlay on top of the blur is an analogue style mix of a milky wash, a stacked vignette,
   a few torn horizontal scan lines and **one pixel** grain, reseeded 25 times a second so it
   flickers like a struggling transmission instead of averaging into flat grey at high frame rates.
@@ -160,6 +169,8 @@ the outcome, so "the check noticed" can be confirmed on its own.
   speckle, and an earlier pass that drew ten of them per grade read as venetian blinds rather than
   as a failing feed. The whole effect is drawn *under* the frame and readouts, so you lose the
   picture, not the instruments.
+  The grain itself is **one GPU pass**, not one `GuiGraphics#fill` per speck — see
+  `client/DroneNoise` and the tuning notes below.
 - **Your body stays put.** Linking in mid sprint, mid jump or mid walk does not leave the player
   skidding, drifting or strolling on their own. Sprint is cancelled, the movement input triple is
   zeroed, the sideways drift is dropped every tick and the fall distance is cleared, so the body
@@ -210,70 +221,6 @@ the outcome, so "the check noticed" can be confirmed on its own.
   anything. Mid charge the packet is still accepted — it carries the aim, which the server clamps
   onto the run's cone — but the position in it is discarded and the leash is skipped, since a
   committed one way run is meant to reach past the line.
-
-### The screen
-
-The drone's camera is a camera, and the picture says so. Everything the world renders while you are
-linked is passed through an **LCD filter** before the visor goes on, and what it draws is a real
-panel rather than a few scanlines:
-
-- **A black matrix.** One device pixel is darkened along the bottom of every cell. The *gap* is
-  always exactly one pixel wide and only the cell size changes — a wider cell means a bigger
-  opening, not a thicker bar, which is what a real panel does and what keeps the effect reading as
-  a screen instead of as venetian blinds.
-- **A subpixel mask.** One device pixel of red, then green, then blue, cycling every three pixels.
-  The three stripes are exactly balanced, so this changes the colour of a column without changing
-  the brightness of the picture — which is what an LCD looks like magnified.
-- **A bezel.** The outermost strip of the screen is darkened. This is the bluntest cue of the lot
-  and the one that survives any picture content, because it does not depend on what is being shown.
-- **Backlight falloff, a cool cast and a lifted black.** LCD blacks glow rather than being black.
-- **A bright band rolling down the panel**, once every five seconds, plus a 24 Hz brightness jitter.
-- **A little colour fringing toward the corners**, and a half pixel softening. Both are lens cues
-  rather than panel cues, and both are strongest where the eye minds them least.
-
-Two things about it are load bearing and easy to get wrong. There is **no vertical matrix column**,
-even though a grid of squares is the obvious mental picture: a one pixel column always falls wholly
-inside a single stripe — the cell's last column is always the blue one — so that channel gets
-darkened twice and the picture goes yellow-green. And the stripe cycle is a **fixed three pixels**,
-not "whatever the cell is divided by three": three stripes only divide a cell evenly when the cell is
-a multiple of three wide, and at the shipped pitch of four, dividing would give red, green, green,
-blue and paint the whole picture green. Tying the stripes to the pixel instead of to the cell makes
-them exactly balanced by construction, and is also just true of real panels.
-
-The grid eats brightness — one row in `p` loses `1/p` of its area — so the mean is divided back out.
-The screen should give you *structure*, not exposure: making the whole world dimmer is a different
-effect, and one that makes caves unplayable.
-
-It is a real shader pass rather than an overlay, and that is not a stylistic choice. `GuiGraphics`
-only fills flat rectangles, so it cannot draw a subpixel — and lines drawn in screen space read as
-lines lying *on top of* the picture rather than as gaps in the panel the picture is shown on. The
-difference shows the moment you turn the camera: an overlay's lines stay put while the world slides
-underneath them. Panel structure has to be a property of the pixels, so it is computed per pixel in
-`assets/watchcraft/shaders/program/lcd.fsh` and knows nothing about what is being displayed.
-
-It hangs off the same post chain as the signal blur, at the same `AFTER_LEVEL` hook, which puts it
-**before** `doEntityOutline`. So the filter is applied to the world only: the glow of every marked
-entity, the reticle, the readouts and the key strip are all composited onto an already filtered
-picture and stay perfectly sharp. That is the same layering the whole visor is built on — you lose
-the picture, not the instruments.
-
-None of it is driven by distance. Full signal or none, the panel looks the same: the signal model
-decides how *bad* the feed is, the panel decides what the feed is being shown *on*. And it is
-strictly a pilot's view — walk around as yourself and there is nothing to see.
-
-Three knobs, all client side, all live, all under **Visuals** in the settings screen:
-
-| Option | Default | Effect |
-| --- | --- | --- |
-| `lcd.enabled` | on | Turns the pass off; the shader then takes a single-sample shortcut |
-| `lcd.strength` | 1.0 | Weight on every ingredient at once. Around 0.5 it is "something feels off about this picture" rather than "I am looking at a screen" |
-| `lcd.pixelPitch` | 0 (auto) | Cell size. 0 follows the resolution — one cell is about 1/270 of the screen height, so roughly 4 at 1080p, 5 at 1440p and 8 at 4K. A nonzero value is an explicit size in device pixels, with a floor of 4 |
-
-Following the resolution by default is not laziness. The pitch is a *physical* quantity, but this
-effect is a *stylised* one: the same four pixel cell that reads correctly at 1080p is fine enough to
-vanish completely at 4K, and a panel you cannot see is not doing anything. The floor of four is
-about proportion rather than geometry — below that a cell is more gap than opening, and it stops
-reading as a panel and starts reading as blinds.
 
 ### Modules
 
@@ -622,10 +569,11 @@ Every texture and model in the mod is generated from source by the scripts in `t
 nothing but the Python standard library — no Pillow, no numpy, no 3D library — so the whole pipeline
 runs on a bare interpreter.
 
-The shaders are the exception and are hand written: `shaders/post/drone_link.json` is the pass
-schedule, and `shaders/program/` holds the fragment programs it names — `radial_blur` for the
-detonation and `lcd` for the panel. None of them are compiled or registered from Java, because a
-post chain reads its files straight off the resource manager: adding a pass is editing a JSON file
+The shaders are the exception and are hand written: `shaders/post/drone_blur.json` is the pass
+schedule for the defocus and the detonation's drag, `shaders/post/screen_noise.json` is the one for
+the grain, and `shaders/program/` holds the fragment programs they name — `radial_blur`,
+`screen_noise`, and vanilla's `box_blur`. None of them are compiled or registered from Java, because
+a post chain reads its files straight off the resource manager: adding a pass is editing a JSON file
 and writing a `.fsh` beside it.
 
 | Script | Does |
@@ -636,7 +584,6 @@ and writing a `.fsh` beside it.
 | `verify_shaders.py` | Checks every post chain against the programs it names: that the programs and shaders exist, that no pass declares a uniform its program does not have, and that the chain ends writing back to `minecraft:main`. |
 | `preview_mesh.py` | Renders the model to PNG offline, both render types, so a packing mistake shows up without launching the game. |
 | `preview_static.py` | Renders the signal-loss overlay offline, blur included, for tuning the veil, vignette and grain. |
-| `preview_lcd.py` | Renders the LCD filter offline: a 1:1 crop sheet for the panel structure, and a whole frame for the bezel and the vignette. |
 | `paths.py` | Where everything lives, resolved once for all of the above. |
 
 Every script runs with no arguments, from anywhere:
@@ -646,14 +593,13 @@ python tools/verify_mesh.py            # 0 failures, 0 warnings on a clean tree
 python tools/verify_shaders.py         # 0 failures, 0 warnings on a clean tree
 python tools/preview_mesh.py           # build/preview/drone-preview.png
 python tools/preview_static.py         # build/preview/static-preview.png
-python tools/preview_lcd.py            # build/preview/lcd-preview*.png
 ```
 
 **Run `verify_shaders.py` after touching anything under `shaders/`.** A post chain is validated at
 load time and it does not degrade gracefully: one bad entry and `PostChain` throws, the whole chain
 never builds, and — because that exception is an `IOException` and `DroneSignal` used to catch and
-discard it — the result is a perfectly clean log and three missing effects. That is not hypothetical;
-it is how the signal blur, the detonation blur and the LCD filter all sat dead for a week. The
+discard it — the result is a perfectly clean log and two missing effects. That is not hypothetical;
+it is how the signal blur and the detonation blur both sat dead for a week. The
 validator is one file and takes a moment.
 
 Changing the model is a two command loop:
@@ -679,14 +625,14 @@ src/main/java/dev/watchcraft/watchcraft/
   network/    payloads + server bound handling
   command/    ModCommands  (/watchcraft doorinteract, /watchcraft dimension)
   server/     DroneSettings (world scoped rules), DroneDimensionGuard (dimension recall)
-  client/     DroneController, DroneHud, DroneSignal, DroneLcd, DroneMarkerOverlay,
+  client/     DroneController, DroneHud, DroneSignal, DroneMarkerOverlay,
               DroneDetectWarning, renderer, rig, meshes, sounds, keys, events, screens
   registry/   items, blocks, entities, menus, data components, sounds, creative tab
 
 src/main/resources/assets/watchcraft/
   models/entity/    drone.obj + drone_glow.obj + their MTLs
-  shaders/post/     the defocus and LCD pass schedule
-  shaders/program/  radial_blur.fsh (detonation), lcd.fsh (the panel)
+  shaders/post/     the defocus + drag schedule, and the grain schedule
+  shaders/program/  radial_blur.fsh (the drag), screen_noise.fsh (the grain)
   textures/         generated
   lang/             en_us, zh_cn
 
@@ -752,32 +698,35 @@ rotation, so the roll is still happening but you are not strapped to it.
 The strength of the signal defocus is `MAX_RADIUS` in `client/DroneSignal` — the widest blur, in
 pixels, at full signal loss. The pass schedule that turns it into a smooth falloff (three
 horizontal/vertical pairs at 1.0, 0.5 and 0.25) lives in
-`assets/watchcraft/shaders/post/drone_link.json`. The screen-space half of the effect is in
+`assets/watchcraft/shaders/post/drone_blur.json`. `BLUR_THRESHOLD` in the same class is the radius
+below which the whole chain is skipped as an identity — it is half a pixel because that is where
+`box_blur`'s `round()` stops returning zero, so raising it starts cutting the effect short rather
+than just saving time. The screen-space half of the effect is in
 `client/DroneHud#drawStatic` and `#drawVignette`; if the picture ever looks milky rather than
 merely degraded, the veil ceiling (`0x50`) is the first thing to lower.
 
-The LCD filter's ingredients are the constants at the top of
-`assets/watchcraft/shaders/program/lcd.fsh` — `GRID` (the black matrix), `MASK` (the subpixel
-stripes) and `STRIPE_PERIOD` (how wide a subpixel is), `FRINGE`, `SOFTEN`, `BAND_WIDTH` / `BAND`,
-`VIGNETTE`, `BEZEL` / `BEZEL_FRACTION`, `TINT` / `LIFT` and `FLICKER`. Those are the *ratios*
-between the parts; `lcd.strength` is the one weight on all of them at once and `lcd.pixelPitch` is
-how big a cell is (0 follows the resolution — see `PITCH_PER_HEIGHT`, `PITCH_MIN` and `PITCH_MAX`
-in `tools/preview_lcd.py`, which mirrors it). If the picture ever looks sprinkled with colour,
-`MASK` is the first one to lower; if it reads as murky rather than as screened, lower `VIGNETTE` or
-`BEZEL`. The rolling band's speed is `DroneLcd.BAND_PERIOD_SECONDS`, and it is the one quantity that
-has to be a Java constant rather than a shader one — the chain hands the shader a `Time` uniform
-that wraps once a second, which is both too fast for a band and discontinuous at the wrap.
+The detonation's full-screen snow is `client/DroneHud#drawDetonationStatic`. Its grain is **one GUI
+pixel**, up to sixty thousand of them, re-rolled every frame — and all three of those are
+deliberate, so change them only with a reason. One pixel is what makes it read as noise rather than
+as confetti; the density is what makes the picture go away; and re-rolling every frame is what makes
+it read as a signal that is failing right now rather than as a still of static. An attempt to save
+frame time by drawing two-pixel grain and holding the pattern for 40 ms kept the coverage identical
+and was reverted on sight — it looked coarse and dead.
 
-Three rules in that file are easy to break by accident, and all three were broken once already.
-The matrix has to be **one device pixel** wide, which is why its edge is `1 - 1/pitch` of a cell
-rather than a fixed fraction — widening it with the cell turns the panel into blinds. The stripe
-period has to be **independent of the cell**, or the three stripes only balance when the cell is a
-multiple of three wide. And both the matrix and the mask divide their own mean gain back out; drop
-either and the picture silently loses brightness, or a channel.
+What did fix the frame time was changing **how** the grain is drawn, not what it looks like. Both
+the snow and the signal speckle are now generated by `client/DroneNoise` in a single full-screen
+pass (`shaders/program/screen_noise.fsh`): one integer hash per GUI pixel decides whether that cell
+is lit, its grey and its alpha. The old loop submitted up to sixty thousand 1×1 quads a frame, and
+that CPU cost — not the GPU — was the stutter. The density handed to the shader is
+`-expm1(-N/cells)` rather than `N/cells`, because the old loop could hit the same cell twice and the
+number of cells that actually lit up was a Poisson occupancy, not a linear share. The grey and alpha
+ranges live in the two branches of that `.fsh`; `tools/preview_static.py` still renders its own
+Python approximation of the grain, so keep the two in step if you retune them.
 
-The detonation's radial blur is split into two numbers for a reason worth knowing. `radial_blur.fsh`
-reads `Strength * BlurAmount`: `Strength` is a **per-pass constant** written in that pass's own entry
-in `drone_link.json` (1.0 for the first pass, 0.5 for the second), and `BlurAmount` is the single
+The detonation's radial blur is the last two passes of `drone_blur.json`, and its two-number scheme
+is worth knowing. `radial_blur.fsh` reads
+`Strength * BlurAmount`: `Strength` is a **per-pass constant** written in that pass's own entry in
+the chain JSON (1.0 for the first pass, 0.5 for the second), and `BlurAmount` is the single
 **per-frame** value Java writes. It has to work that way because `PostChain#setUniform` applies a
 uniform to **every pass that declares it** — there is no way to set one pass alone, so two passes
 that want different amounts need two names, and the per-pass one has to come from the JSON.
@@ -812,4 +761,4 @@ Which keys are swallowed lives in `DroneController#swallowUiKeys`, called from
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+All rights reserved.

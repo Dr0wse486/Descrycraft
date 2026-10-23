@@ -685,6 +685,21 @@ public class ReconDroneEntity extends Entity {
 
     // ------------------------------------------------------------------ setup
 
+    /**
+     * Widens the frustum-culling box to cover the rotor discs.
+     *
+     * <p>The hitbox is 0.8 x 0.45 x 0.8, but the mesh spans 1.037 blocks - the tips of the
+     * rotors stick out well past the collision box on both sides. Vanilla culls an entity the
+     * moment its <em>bounding box</em> leaves the frustum, so with the default implementation a
+     * drone hovering at the edge of the screen would pop out of existence while its rotors were
+     * still plainly visible. Rendering is the only thing this affects; collision, the interact
+     * raycast and placement all keep using the real hitbox.
+     */
+    @Override
+    public AABB getBoundingBoxForCulling() {
+        return super.getBoundingBoxForCulling().inflate(0.13);
+    }
+
     @Override
     protected void defineSynchedData(SynchedEntityData.Builder builder) {
         builder.define(DATA_PILOT_ID, -1);
@@ -808,6 +823,14 @@ public class ReconDroneEntity extends Entity {
     }
 
     public boolean hasModule(int flag) {
+        // 没电池就没有电，装了什么也跑不起来。这是"没电池的机体基本没用"最实在的一层：
+        // 不只是画面糊、方向转不动，链路加成、速度、视野、战斗部和两块侦察板也一起停。
+        // 读的是同步过来的电池槽，所以客户端算出来的链路 / 速度 / 视野和服务端一致。
+        if (!this.hasBattery()) {
+            return false;
+        }
+        // 装了不等于在跑：改装界面上关掉的模块仍然算"已装"（工作台据此拒绝重复安装），
+        // 但游戏逻辑一律按"已装且未关"来判，所以整个模组只有这一处需要合并两个掩码。
         return DroneModules.has(this.getModules(), flag);
     }
 

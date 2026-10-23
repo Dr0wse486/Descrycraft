@@ -73,7 +73,6 @@ public final class WatchcraftClient {
     public static void applyClientConfig() {
         DroneController.applyConfig();
         DroneSignal.applyConfig();
-        DroneLcd.applyConfig();
         DroneShake.applyConfig();
         DroneHud.applyConfig();
         DroneMarkerOverlay.applyConfig();
