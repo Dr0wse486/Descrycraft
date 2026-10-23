@@ -750,10 +750,6 @@ Which keys are swallowed lives in `DroneController#swallowUiKeys`, called from
 
 ## Docs
 
-- [`docs/model-and-animation.md`](docs/model-and-animation.md) — how the rig works and what is
-  still missing.
-- [`docs/obj-modelling-brief.md`](docs/obj-modelling-brief.md) — the conventions a new part has to
-  follow, and why parts interpenetrate instead of abutting.
 - `docs/drone-preview.png`, `docs/drone-uv-layout.png` — the model and its texture atlas, both
   regenerable with `python tools/preview_mesh.py`.
 
