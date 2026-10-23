@@ -53,8 +53,10 @@ import net.neoforged.neoforge.network.PacketDistributor;
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -263,6 +265,80 @@ public class ReconDroneEntity extends Entity {
     public static boolean DETECT_ALERT_ENABLED = true;
     /** 同一个玩家最短多少刻收到一次警告。40 刻 = 2 秒，够显眼又不至于刷屏。 */
     public static int DETECT_ALERT_INTERVAL = 40;
+
+    // ------------------------------------------------------------------ 跟随
+
+    /** 放飞后是否默认进入跟随。 */
+    public static boolean FOLLOW_ENABLED = true;
+    /**
+     * 跟在玩家身后的水平距离（格）。
+     *
+     * <p>刻意不做成"一直在头顶"。正上方会挡住玩家抬头的视野，而且看起来不像跟随，
+     * 像被吊着 —— 目标点落在身后才有"跟着走"的感觉。
+     */
+    public static double FOLLOW_DISTANCE = 4.0D;
+    /** 相对玩家的高度（格）。天花板低时会自动压低，见 {@link #FOLLOW_CLEARANCE}。 */
+    public static double FOLLOW_HEIGHT = 4.0D;
+    /**
+     * 速度控制器的增益：离目标点每远一格，速度加多少。
+     *
+     * <p>这是跟随能不能跟上的关键。恒定速度是不行的 —— 无人机的手动飞行上限 0.24 格/刻
+     * 比玩家疾跑的约 0.28 还慢，匀速跟随必然被甩掉。改成距离驱动之后，靠近时慢悠悠地飘，
+     * 被拉开就加速追。
+     */
+    public static double FOLLOW_GAIN = 0.08D;
+    /**
+     * 跟随的最高速度（格/刻）。
+     *
+     * <p>必须高于 {@link #FLIGHT_SPEED}(0.24)，否则跟不上疾跑的玩家。0.55 约合 11 m/s，
+     * 能追上疾跑，但仍远低于 {@link #CHARGE_SPEED}(1.45)。这是平衡上的让步，不过跟随是
+     * 自动的，玩家拿不到"免费加速"。
+     */
+    public static double FOLLOW_MAX_SPEED = 0.55D;
+    /** 速度每刻朝目标值收敛的比例，0~1。跟随手感的主要旋钮。 */
+    public static double FOLLOW_ACCEL = 0.25D;
+    /**
+     * 玩家速度估算每刻的收敛比例，0~1。
+     *
+     * <p>前瞻靠这个速度值，所以它不能抖：单帧位移里带着大量的起步/刹车噪声，直接拿去外推
+     * 会让目标点一跳一跳。平滑之后外推出来的是一条稳定的预测线。
+     *
+     * <p>也别调太小。太小会让预测严重滞后于玩家的实际动作，前瞻就失效了 ——
+     * 那时无人机又变回"追着屁股跑"。
+     */
+    public static double FOLLOW_TURN_SMOOTHING = 0.25D;
+    /** 离放飞者超过这个距离就直接收回（格）。这是失败检测，不是常规路径。 */
+    public static double FOLLOW_RECALL_DISTANCE = 48.0D;
+    /** 与天花板的净空（格）。玩家进洞穴时 {@link #FOLLOW_HEIGHT} 会落在岩石里。 */
+    public static double FOLLOW_CLEARANCE = 1.5D;
+
+    // ------------------------------------------------------------------ 跟随的寻路 AI
+
+    /**
+     * 足迹缓冲保留多少个位置点。
+     *
+     * <p>足迹是这套寻路的地基：<b>玩家走过的路一定是通的</b>。沿着它走永远不会撞墙，
+     * 而且不需要在飞行时做任何搜索 —— 路径是玩家用脚投票投出来的。
+     */
+    public static int FOLLOW_TRAIL_LENGTH = 64;
+    /**
+     * 前瞻多少刻。
+     *
+     * <p>无人机瞄的是"玩家再走这么多刻之后会在哪"，而不是玩家此刻在哪。没有这一条，
+     * 跟随永远慢半拍地追着屁股跑 —— 玩家一拐弯，无人机才跟着拐，看起来就很笨。
+     */
+    public static int FOLLOW_PREDICT_TICKS = 10;
+    /**
+     * 隔多少刻重算一次指引点。
+     *
+     * <p>算一次要打十几条射线，而路径在几刻之内不会变，每刻都算是浪费。
+     */
+    public static int FOLLOW_PATH_REFRESH_TICKS = 3;
+    /** 每次重算最多打几条射线，也就是往回退着找可达点时最多看几个足迹点。 */
+    public static int FOLLOW_PATH_SAMPLES = 12;
+
+    /** 足迹点之间的最小间距。站着不动时不追加，否则缓冲会被同一个位置填满。 */
+    private static final double FOLLOW_TRAIL_STEP = 0.35D;
 
     /** Blocks per tick while piloted. Kept deliberately slow so the drone reads as a scout. */
     public static double FLIGHT_SPEED = 0.24D;
@@ -482,6 +558,15 @@ public class ReconDroneEntity extends Entity {
             SynchedEntityData.defineId(ReconDroneEntity.class, EntityDataSerializers.INT);
 
     /**
+     * 是否正在跟随放飞者。
+     *
+     * <p>同步出去有两个用处：驾驶员的客户端要在读数里显示这个状态，而
+     * {@code lerpTo} 那一侧的判断也需要知道位置是由谁主导的。
+     */
+    private static final EntityDataAccessor<Boolean> DATA_FOLLOWING =
+            SynchedEntityData.defineId(ReconDroneEntity.class, EntityDataSerializers.BOOLEAN);
+
+    /**
      * The owner's UUID as text, empty when there is none.
      *
      * <p>Synced rather than kept in a plain field because the client has to be able to answer
@@ -529,6 +614,35 @@ public class ReconDroneEntity extends Entity {
     private boolean detonating;
     /** 服务端：雪花屏阶段剩余的刻数，大于 0 时机体冻结、等待销毁。 */
     private int staticTicks;
+
+    // ------------------------------------------------------------------ 跟随状态（服务端）
+
+    /**
+     * 放飞者最近的足迹，从旧到新。
+     *
+     * <p>这是整套跟随 AI 的地基。玩家已经用脚证明了那条路是通的，所以沿着它飞永远撞不到墙 ——
+     * 这比在飞行时做实时搜索可靠得多，而且开阔地、拐角、洞穴三种场景自动都成立。
+     */
+    private final Deque<Vec3> followTrail = new ArrayDeque<>();
+    /** 平滑后的放飞者速度（格/刻），用来把足迹往前外推做前瞻。 */
+    private Vec3 followVelocity = Vec3.ZERO;
+    /** 上一刻的玩家位置，用来求速度。 */
+    @Nullable
+    private Vec3 followAnchor;
+    /**
+     * 当前指引点，每隔几刻重算一次。
+     *
+     * <p>它是"沿足迹往回退，能直线飞到的那个最靠前的点"。缓存起来是因为算一次要打十几条
+     * 射线，而路径在几刻之内不会变。
+     */
+    @Nullable
+    private Vec3 followGuide;
+    /** 距离下一次重算还剩多少刻。 */
+    private int followGuideTimer;
+    /** 卡住时给目标高度加的临时偏置，让它爬过障碍。 */
+    private double followClimbBias;
+    /** 连续多少刻没走动。 */
+    private int followStuckTicks;
 
     /** Client side damage flash timer, driven by {@link #EVENT_HURT}. */
     private int hurtTime;
@@ -666,6 +780,19 @@ public class ReconDroneEntity extends Entity {
 
         DETECT_ALERT_ENABLED = common.detectAlertEnabled.get();
         DETECT_ALERT_INTERVAL = common.detectAlertInterval.get();
+        FOLLOW_ENABLED = common.followEnabled.get();
+        FOLLOW_DISTANCE = common.followDistance.get();
+        FOLLOW_HEIGHT = common.followHeight.get();
+        FOLLOW_GAIN = common.followGain.get();
+        FOLLOW_MAX_SPEED = common.followMaxSpeed.get();
+        FOLLOW_ACCEL = common.followAccel.get();
+        FOLLOW_TURN_SMOOTHING = common.followTurnSmoothing.get();
+        FOLLOW_RECALL_DISTANCE = common.followRecallDistance.get();
+        FOLLOW_CLEARANCE = common.followClearance.get();
+        FOLLOW_TRAIL_LENGTH = common.followTrailLength.get();
+        FOLLOW_PREDICT_TICKS = common.followPredictTicks.get();
+        FOLLOW_PATH_REFRESH_TICKS = common.followPathRefreshTicks.get();
+        FOLLOW_PATH_SAMPLES = common.followPathSamples.get();
 
         BANK_GAIN = common.bankGain.get().floatValue();
         MAX_BANK = common.maxBank.get().floatValue();
@@ -716,6 +843,7 @@ public class ReconDroneEntity extends Entity {
         builder.define(DATA_OWNER, "");
         builder.define(DATA_BATTERY, ItemStack.EMPTY);
         builder.define(DATA_RECALL_TICKS, 0);
+        builder.define(DATA_FOLLOWING, false);
     }
 
     @Override
@@ -1197,6 +1325,48 @@ public class ReconDroneEntity extends Entity {
         return this.entityData.get(DATA_STATIC_TICKS);
     }
 
+    // ------------------------------------------------------------------ follow
+
+    public boolean isFollowing() {
+        return this.entityData.get(DATA_FOLLOWING);
+    }
+
+    /**
+     * 设置跟随状态。
+     *
+     * <p>关掉时把速度与方向一并清干净。不清的话下一次打开会带着上一次的残余速度起步 ——
+     * 无人机停在原地时速度本来就该是零，留着只会让它在重新跟上的第一刻窜一下。
+     */
+    public void setFollowing(boolean following) {
+        if (this.isFollowing() == following) {
+            return;
+        }
+        this.entityData.set(DATA_FOLLOWING, following);
+        if (!following) {
+            this.setDeltaMovement(Vec3.ZERO);
+            this.followAnchor = null;
+            this.followTrail.clear();
+            this.followVelocity = Vec3.ZERO;
+            this.followGuide = null;
+            this.followGuideTimer = 0;
+            this.followClimbBias = 0.0D;
+            this.followStuckTicks = 0;
+        }
+    }
+
+    /**
+     * 切换跟随。由服务端执行，只有放飞者能改。
+     *
+     * @return 切换后的状态；调用者不是放飞者时返回当前状态、不做改动
+     */
+    public boolean toggleFollow(Player player) {
+        if (!this.isOwnedBy(player) || this.isDetonated()) {
+            return this.isFollowing();
+        }
+        this.setFollowing(!this.isFollowing());
+        return this.isFollowing();
+    }
+
     /** {@return 是否处于引爆后的雪花屏阶段} */
     public boolean isDetonated() {
         return this.getStaticTicks() > 0;
@@ -1479,9 +1649,16 @@ public class ReconDroneEntity extends Entity {
 
         if (this.thrown && pilot == null) {
             this.tickThrown();
+        } else if (this.isFollowing() && pilot == null) {
+            // 跟随只在没人驾驶时接管：驾驶员一接管，位置就归客户端主导了（见 handleMove），
+            // 两边同时写会互相抢。松开链路之后这里自然接着跟。
+            this.tickFollow(serverLevel);
+            // 距离超限会在里面直接收回，机体已经没了。后面的扫描与发布不必再跑。
+            if (this.isRemoved()) {
+                return;
+            }
         } else {
-            // 没人驾驶时无人机原地悬停，当一个固定哨兵。它不跟人走：位置要么归客户端主导
-            // （见 handleMove），要么就停在这儿 —— 中间没有第三种状态要维护。
+            // 没人驾驶也没开跟随时，无人机原地悬停，当一个固定哨兵。
             this.setDeltaMovement(Vec3.ZERO);
         }
 
@@ -1587,6 +1764,257 @@ public class ReconDroneEntity extends Entity {
         if (this.throwTicks > THROW_TICKS) {
             this.thrown = false;
             this.setDeltaMovement(Vec3.ZERO);
+        }
+    }
+
+    // ------------------------------------------------------------------ follow
+
+    /**
+     * 跟随放飞者的一刻。
+     *
+     * <p>目标点是"玩家身后 {distance} 格、上方 {height} 格"，不是正头顶。正上方会挡住玩家
+     * 抬头的视野，而且看起来不像跟随，像被吊着。
+     *
+     * <p>速度不是常数，而是<b>离目标点越远越快</b>。这一点是跟随能不能成立的前提：无人机的手动
+     * 飞行上限 0.24 格/刻比玩家疾跑的约 0.28 还慢，匀速跟随必然被甩掉。改成距离驱动之后，
+     * 在玩家身边时慢悠悠地飘，被拉开就加速追。
+     *
+     * <p>锚点是<b>放飞者</b>而不是驾驶员 —— 跟随的意义就是"玩家没坐在驾驶舱里的时候它也在飞"。
+     */
+    private void tickFollow(ServerLevel level) {
+        ServerPlayer owner = this.getOwnerPlayer(level);
+        if (owner == null) {
+            // 放飞者不在线，锚点就没了。原地悬停等着，不做任何猜测。
+            this.setDeltaMovement(Vec3.ZERO);
+            this.followAnchor = null;
+            return;
+        }
+
+        // 距离超限直接收回。这不是常规路径而是失败检测：跟随时本不该拉开距离，能拉开就说
+        // 明出了事 —— 传送、鞘翅、卡在方块里、区块边界抖动。它顺带把"传送后横穿世界"
+        // 这个原本要单独处理的情况一并挡掉了。
+        if (owner.distanceToSqr(this) > FOLLOW_RECALL_DISTANCE * FOLLOW_RECALL_DISTANCE) {
+            this.recallTo(owner);
+            return;
+        }
+
+        Vec3 ownerPos = owner.position();
+        this.updateTrail(ownerPos);
+
+        // 指引点每隔几刻重算一次：算一次要打十几条射线，而路径在几刻之内不会变。
+        if (this.followGuide == null || --this.followGuideTimer <= 0) {
+            this.followGuide = this.computeGuidePoint(level, ownerPos);
+            this.followGuideTimer = FOLLOW_PATH_REFRESH_TICKS;
+        }
+        Vec3 guide = this.followGuide;
+
+        // 高度按<b>指引点那一列</b>探天花板，不是按玩家那一列 —— 无人机实际要待的地方是
+        // 指引点上方，那一列有顶就压不下去。
+        Vec3 target = new Vec3(
+                guide.x,
+                this.followAltitude(level, guide.x, ownerPos.y, guide.z) + this.followClimbBias,
+                guide.z);
+
+        Vec3 offset = target.subtract(this.position());
+        double distance = offset.length();
+        double wanted = Math.min(distance * FOLLOW_GAIN, FOLLOW_MAX_SPEED);
+        Vec3 desired = distance < 1.0E-4D ? Vec3.ZERO : offset.scale(wanted / distance);
+
+        // 速度本身也要平滑。直接赋值会让无人机在目标点附近来回抽搐 —— 控制器一帧把速度打到
+        // 目标值，下一帧误差反向，于是抖个不停。让当前速度每刻朝目标值收敛一部分就没这问题。
+        Vec3 current = this.getDeltaMovement();
+        Vec3 step = current.add(desired.subtract(current).scale(FOLLOW_ACCEL));
+        this.setDeltaMovement(step);
+
+        Vec3 before = this.position();
+        this.move(MoverType.SELF, step);
+        this.detectFollowStall(step, before);
+        this.clampToWorld(level);
+
+        // 机头看着玩家。跟随时的朝向纯粹是观感，扫描是全向的，不依赖它。
+        Vec3 toOwner = ownerPos.add(0.0D, owner.getEyeHeight() * 0.5D, 0.0D).subtract(this.position());
+        if (toOwner.lengthSqr() > 1.0E-4D) {
+            this.setYRot(yawOf(toOwner));
+            this.setXRot(pitchOf(toOwner));
+        }
+    }
+
+    /**
+     * 记录放飞者的足迹，并估算速度。
+     *
+     * <p>足迹只在真的移动时才追加。站着不动时不追加有两个好处：缓冲不会被同一个位置填满，
+     * 而且"路径的弧长"自然就等于"走过多远"，后面按弧长算站位才准。
+     *
+     * <p>速度用平滑值而不是本刻位移：前瞻靠它，单帧的抖动会让目标点跟着跳。
+     */
+    private void updateTrail(Vec3 ownerPos) {
+        Vec3 previous = this.followAnchor;
+        this.followAnchor = ownerPos;
+        if (previous != null) {
+            this.followVelocity = this.followVelocity.lerp(
+                    ownerPos.subtract(previous), FOLLOW_TURN_SMOOTHING);
+        }
+
+        Vec3 newest = this.followTrail.peekLast();
+        if (newest == null
+                || newest.distanceToSqr(ownerPos) >= FOLLOW_TRAIL_STEP * FOLLOW_TRAIL_STEP) {
+            this.followTrail.addLast(ownerPos);
+            while (this.followTrail.size() > FOLLOW_TRAIL_LENGTH) {
+                this.followTrail.removeFirst();
+            }
+        }
+    }
+
+    /**
+     * {@return 这一轮该朝哪个点飞}
+     *
+     * <p>算法是「沿足迹往回退到站位，再从站位往旧的方向找第一个视线可达的点」——
+     * 也就是经典的拉绳简化。这一条规则同时解决了三件事，而且不需要任何搜索：
+     *
+     * <ul>
+     *   <li><b>寻路</b>：站位和它之前的每个点都落在玩家走过的路上，那条路一定可通行；</li>
+     *   <li><b>抄近路</b>：开阔地上站位本身就能一眼看到，于是无人机直接朝它飞，
+     *       不会呆板地贴着脚印一个点一个点挪；</li>
+     *   <li><b>避障</b>：拐角后面看不到站位，射线会失败，于是自动往回退到能看到的那个点 ——
+     *       无人机就沿着拐角绕过去，而不是一头撞进墙里。这是<b>主动</b>避障，
+     *       不是"撞上了才抬高"那种被动补救。</li>
+     * </ul>
+     *
+     * <p>前瞻接在足迹尾部：把「玩家再走几刻之后会在哪」当成一个虚拟的未来足迹点一起参与。
+     * 于是前瞻是<b>受可达性约束</b>的 —— 想象出来的未来点如果穿墙，射线同样会失败，
+     * 不会把无人机骗进墙里。
+     */
+    private Vec3 computeGuidePoint(ServerLevel level, Vec3 ownerPos) {
+        Vec3 predicted = ownerPos.add(this.followVelocity.scale(FOLLOW_PREDICT_TICKS));
+
+        List<Vec3> path = new ArrayList<>(this.followTrail.size() + 2);
+        // 在足迹之前补一个"沿速度反方向再退 FOLLOW_DISTANCE"的合成点。
+        // 刚放飞时足迹还不够长，不补的话沿路径量不出站位，无人机会直接朝玩家飞过去 ——
+        // 那一秒左右的过渡期里它会贴到脸上。补上之后它一开始就待在合理的位置。
+        Vec3 back = horizontalDirection(this.followVelocity);
+        if (back != null) {
+            path.add(ownerPos.subtract(back.scale(FOLLOW_DISTANCE)));
+        }
+        path.addAll(this.followTrail);
+        path.add(predicted);
+        if (path.size() < 2) {
+            return predicted;
+        }
+
+        // 站位是"沿路径从队尾往回走这么远"。用弧长而不是直线距离，是因为拐角处直线距离
+        // 会算出一个穿墙的位置；沿路径量出来的那个点一定在路上。
+        double arc = predicted.distanceTo(ownerPos) + FOLLOW_DISTANCE;
+        int station = stationIndex(path, arc);
+
+        Vec3 eye = this.getEyePosition();
+        double flightY = ownerPos.y + FOLLOW_HEIGHT;
+
+        int checked = 0;
+        for (int i = station; i >= 0 && checked < FOLLOW_PATH_SAMPLES; i--, checked++) {
+            Vec3 point = path.get(i);
+            if (hasClearFlightLine(level, eye, point.x, flightY, point.z)) {
+                return point;
+            }
+        }
+
+        // 整条足迹都看不到（刚放飞，或者隔着整座山）。退回最旧的那个点，
+        // 剩下的交给卡住检测 —— 它会在几刻之后把目标抬起来越过障碍。
+        return path.get(0);
+    }
+
+    /**
+     * {@return 这个向量的水平单位方向，水平分量太小时为 {@code null}}
+     *
+     * <p>玩家的位置是三维的，但"身后"只关心水平面：俯仰不构成方向，掉进一个坑里
+     * 也不该让无人机跑到头顶上去。
+     */
+    @Nullable
+    private static Vec3 horizontalDirection(Vec3 vector) {
+        double horizontalSqr = vector.x * vector.x + vector.z * vector.z;
+        if (horizontalSqr < 1.0E-6D) {
+            return null;
+        }
+        double horizontal = Math.sqrt(horizontalSqr);
+        return new Vec3(vector.x / horizontal, 0.0D, vector.z / horizontal);
+    }
+
+    /**
+     * {@return 路径上"离队尾 {@code arcFromEnd} 格"的那个点的下标}
+     *
+     * <p>足迹点间距很小（0.35 格），所以取最近的整点就够，不需要在段内插值。
+     */
+    private int stationIndex(List<Vec3> path, double arcFromEnd) {
+        double remaining = arcFromEnd;
+        for (int i = path.size() - 1; i > 0; i--) {
+            double segment = path.get(i).distanceTo(path.get(i - 1));
+            if (segment >= remaining) {
+                return i - 1;
+            }
+            remaining -= segment;
+        }
+        return 0;
+    }
+
+    /**
+     * {@return 无人机能否直线飞到目标点的上方}
+     *
+     * <p>射线瞄的是「目标点上方的飞行高度」，不是目标点本身。足迹记的是玩家脚下的位置，
+     * 拿它去测会把所有路都判成不通 —— 无人机是在四格高的地方飞的，那条线上通常什么都没有。
+     * 起点用无人机的眼睛，终点抬到飞行高度，于是这条射线走的正是它接下来要走的那条线。
+     */
+    private boolean hasClearFlightLine(Level level, Vec3 from, double x, double y, double z) {
+        Vec3 to = new Vec3(x, y, z);
+        if (from.distanceToSqr(to) < 0.25D) {
+            return true;
+        }
+        return this.hasClearLine(level, from, to);
+    }
+
+    /**
+     * {@return 目标高度}
+     *
+     * <p>不是简单的 {@code baseY + height}：玩家走进洞穴或室内时，那个高度会落在岩石里，
+     * 无人机会一头顶进顶板。所以向上探一层，把目标压到天花板之下。
+     *
+     * <p>探的是<b>指引点那一列</b>（{@code x}/{@code z}），不是玩家那一列。无人机实际要待的
+     * 地方是指引点上方，那一列有顶就得压低 —— 用玩家那一列探，会在"无人机还在拐角另一边"
+     * 的时候给出一个错误的高度。
+     */
+    private double followAltitude(ServerLevel level, double x, double baseY, double z) {
+        double wanted = baseY + FOLLOW_HEIGHT;
+        int reach = (int) Math.ceil(FOLLOW_HEIGHT + FOLLOW_CLEARANCE) + 1;
+        for (int i = 1; i <= reach; i++) {
+            BlockPos probe = BlockPos.containing(x, baseY + i, z);
+            if (level.getBlockState(probe).isSolidRender(level, probe)) {
+                return Math.min(wanted, baseY + i - FOLLOW_CLEARANCE);
+            }
+        }
+        return wanted;
+    }
+
+    /**
+     * 卡住检测与脱困。
+     *
+     * <p>无人机能飞，所以脱困不需要寻路：抬高一点，绝大多数障碍就从"挡路的墙"变成了
+     * "脚下的东西"。这比 A* 便宜几个数量级，而且够用 —— 跟随的目标始终在玩家附近，
+     * 而玩家一定站在能站立的地方，两者之间不会有真正复杂的通路问题。
+     *
+     * <p>偏置是渐进的（每刻 +0.15）且有上限（{@link #FOLLOW_HEIGHT}），所以它表现为
+     * "慢慢升起来跨过去"，而不是"弹射上去"。
+     */
+    private void detectFollowStall(Vec3 step, Vec3 before) {
+        double intended = step.length();
+        double moved = this.position().distanceTo(before);
+        if (intended > 0.02D && moved < intended * 0.5D) {
+            this.followStuckTicks++;
+        } else {
+            this.followStuckTicks = Math.max(0, this.followStuckTicks - 1);
+        }
+
+        if (this.followStuckTicks > 8) {
+            this.followClimbBias = Math.min(FOLLOW_HEIGHT, this.followClimbBias + 0.15D);
+        } else if (this.followStuckTicks == 0) {
+            this.followClimbBias = Math.max(0.0D, this.followClimbBias - 0.1D);
         }
     }
 
