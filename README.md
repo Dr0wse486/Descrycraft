@@ -637,7 +637,7 @@ src/main/resources/assets/watchcraft/
   lang/             en_us, zh_cn
 
 tools/        the asset pipeline (Python, standard library only)
-docs/         design notes, including the full modelling spec
+docs/         design notes
 ```
 
 ## Tuning
@@ -750,8 +750,6 @@ Which keys are swallowed lives in `DroneController#swallowUiKeys`, called from
 
 ## Docs
 
-- [`docs/detailed-model-obj-plan.md`](docs/detailed-model-obj-plan.md) — the full modelling spec:
-  every part, its pivot, its face budget and the source line that proves the API it relies on.
 - [`docs/model-and-animation.md`](docs/model-and-animation.md) — how the rig works and what is
   still missing.
 - [`docs/obj-modelling-brief.md`](docs/obj-modelling-brief.md) — the conventions a new part has to
