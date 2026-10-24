@@ -1,6 +1,7 @@
 package dev.watchcraft.watchcraft.network;
 
 import dev.watchcraft.watchcraft.entity.ReconDroneEntity;
+import dev.watchcraft.watchcraft.item.DroneModules;
 import dev.watchcraft.watchcraft.registry.ModItems;
 import dev.watchcraft.watchcraft.server.DroneSettings;
 import net.minecraft.network.chat.Component;
@@ -128,6 +129,7 @@ public final class ModNetwork {
             case DroneActionPayload.ACTION_INTERACT -> interact(level, player, payload.droneId());
             case DroneActionPayload.ACTION_CHARGE -> charge(level, player, payload.droneId());
             case DroneActionPayload.ACTION_DETONATE -> detonate(level, player, payload.droneId());
+            case DroneActionPayload.ACTION_FOLLOW -> toggleFollow(level, player);
             default -> {
             }
         }
@@ -234,6 +236,26 @@ public final class ModNetwork {
         if (drone.beginRecall()) {
             player.displayClientMessage(Component.translatable("message.watchcraft.recalling"), true);
         }
+    }
+
+    /**
+     * 切换跟随。不收 droneId：服务端自己找放飞者名下的那一架 —— 这个键的意义就是
+     * 玩家在别处做别的事时也能用，那时他并不知道也不关心机体的实体 id。
+     */
+    private static void toggleFollow(ServerLevel level, ServerPlayer player) {
+        ReconDroneEntity drone = ReconDroneEntity.findDeployed(player);
+        if (drone == null) {
+            return;
+        }
+        // 跟随是一块板子的功能，不是机体自带的。没装就明确说一声，别让玩家以为键坏了。
+        if (!drone.hasModule(DroneModules.FOLLOW)) {
+            player.displayClientMessage(
+                    Component.translatable("message.watchcraft.follow_no_module"), true);
+            return;
+        }
+        boolean following = drone.toggleFollow(player);
+        player.displayClientMessage(Component.translatable(
+                following ? "message.watchcraft.follow_on" : "message.watchcraft.follow_off"), true);
     }
 
     private static void handleMove(DroneMovePayload payload, IPayloadContext context) {

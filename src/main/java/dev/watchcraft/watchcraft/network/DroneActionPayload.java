@@ -20,6 +20,9 @@ public record DroneActionPayload(int action, int droneId) implements CustomPacke
     /** Blow the warhead on the spot, without a run. Same module gate as {@link #ACTION_CHARGE}. */
     public static final int ACTION_DETONATE = 6;
 
+    /** Toggle follow mode on the owner's drone. Needs no link and no drone id. */
+    public static final int ACTION_FOLLOW = 7;
+
     public static final CustomPacketPayload.Type<DroneActionPayload> TYPE =
             new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath(Watchcraft.MOD_ID, "drone_action"));
 

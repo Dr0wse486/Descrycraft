@@ -186,8 +186,9 @@ public final class DroneHud {
             drawTelemetry(graphics, minecraft.font, drone, range, millis);
         }
         if (showHints) {
-            drawHints(graphics, minecraft.font, width, height,
-                    drone.hasModule(DroneModules.ATTACK) ? chargeKeys(minecraft) : null);
+        drawHints(graphics, minecraft.font, width, height,
+                drone.hasModule(DroneModules.ATTACK) ? chargeKeys(minecraft) : null,
+                drone.hasModule(DroneModules.SPEED));
         }
         if (breakup >= 1.0D) {
             // 没电池也会把画面糊死，但那时候说"信号丢失"是错的：信号好得很，缺的是电。
@@ -662,7 +663,8 @@ public final class DroneHud {
      * <p>The run entry is the one piece of text on the visor that is not dim cyan. It destroys the
      * drone, and it should not be discovered by accident.
      */
-    private static void drawHints(GuiGraphics graphics, Font font, int width, int height, String chargeKeys) {
+    private static void drawHints(GuiGraphics graphics, Font font, int width, int height,
+                                  String chargeKeys, boolean hasSpeedModule) {
         List<Hint> hints = new ArrayList<>();
         hints.add(new Hint("[" + key(KeyMappings.LINK) + "] " + translate("hud.watchcraft.disconnect"), TEXT_DIM));
         hints.add(new Hint("[" + key(KeyMappings.THROW) + "] " + translate("hud.watchcraft.throw"), TEXT_DIM));

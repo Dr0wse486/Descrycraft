@@ -215,6 +215,23 @@ public final class DroneController {
     /** 平滑后的滚筒视场角倍率，和冲刺视场角分开累加。 */
     private static double rollerFov = 1.0D;
 
+    // ------------------------------------------------------------------ 穿梭机手感
+
+    /**
+     * 转向压弯掉速的幅度。
+     *
+     * <p>平飞最快、压弯要付代价，玩家才会去挑航线而不是一路按着前。这是"穿梭机手感"的一半，
+     * 另一半是 {@link #FLIGHT_DIVE_SPEED_GAIN}。
+     */
+    private static double FLIGHT_BANK_SPEED_LOSS = 0.25D;
+    /**
+     * 俯冲换速度的幅度。
+     *
+     * <p>机头朝下时加速、抬头时减速，于是高度变成可以花的东西：爬升是存能量、俯冲是取能量。
+     * 配合上面那条，一次"俯冲进场 → 压弯脱离"就有了明确的快慢节奏。
+     */
+    private static double FLIGHT_DIVE_SPEED_GAIN = 0.35D;
+
     /**
      * 回正阶段的起始角度，松手那一刻冻结下来，回正从这里出发收到 0。
      *
@@ -287,6 +304,8 @@ public final class DroneController {
         CHARGE_REQUEST_COOLDOWN = client.chargeRequestCooldown.get();
         CHARGE_AIM_TAU = client.chargeAimTau.get();
         CHARGE_AIM_GAIN = client.chargeAimGain.get();
+        FLIGHT_BANK_SPEED_LOSS = client.flightBankSpeedLoss.get();
+        FLIGHT_DIVE_SPEED_GAIN = client.flightDiveSpeedGain.get();
     }
 
     public static boolean isLinked() {
@@ -565,6 +584,7 @@ public final class DroneController {
         if (Math.abs(rollerFov - 1.0D) < 1.0E-3D) {
             rollerFov = 1.0D;
         }
+
     }
 
     /** {@return the multiplier the FOV hook should apply to the projection this frame} */
@@ -583,9 +603,33 @@ public final class DroneController {
     }
 
     /** {@return 当前巡航上限倍率。滚筒冲刺时是 1 + 配置增益，否则为 1} */
-    public static double speedCapMultiplier() {
-        return rollerDashing ? 1.0D + ROLLER_DASH_SPEED_GAIN : 1.0D;
+    /**
+     * {@return 这一帧速度上限的倍率}
+     *
+     * <p>巡航上限本身只有一个来源 —— {@code flightSpeed()}。所有「能飞更快」的情况都乘在这里，
+     * 于是「最高速是多少」永远只有一处定义，而每一种加速各自是一个可以单独关掉的倍率。
+     *
+     * <p>三档：滚筒冲刺（滚筒 + 冲刺键）、转向压弯的掉速、俯冲换速度。
+     * 第一档是主动加速，后两档是「怎么飞决定多快」—— 后者才是穿梭机手感的主体，
+     * 因为它让高度和航线变成了有代价的选择。
+     */
+    public static double speedCapMultiplier(ReconDroneEntity drone) {
+        double multiplier = 1.0D;
+        if (rollerDashing) {
+            multiplier *= 1.0D + ROLLER_DASH_SPEED_GAIN;
+        }
+        // 压弯掉速：机翼倾得越狠，迎风面越大。满倾角时剩 (1 - loss)。
+        double bankRatio = Mth.clamp(
+                Math.abs(drone.getBank(1.0F)) / Math.max(1.0F, ReconDroneEntity.MAX_BANK), 0.0D, 1.0D);
+        multiplier *= 1.0D - FLIGHT_BANK_SPEED_LOSS * bankRatio;
+        // 俯冲换速度：低头加速、抬头减速。xRot 正值是低头，所以符号是正的。
+        double pitchRatio = Mth.clamp(drone.getXRot() / 90.0D, -1.0D, 1.0D);
+        multiplier *= 1.0D + FLIGHT_DIVE_SPEED_GAIN * pitchRatio;
+        // 夹一道：配置可以配出极端组合（满俯冲 + 双冲刺），不该让机体一帧窜出去或原地趴窝。
+        return Mth.clamp(multiplier, 0.4D, 3.0D);
     }
+
+    // ------------------------------------------------------------------ 速度模块小冲刺
 
     /**
      * {@return the roll the pilot's camera should carry this frame, in degrees}
@@ -756,6 +800,14 @@ public final class DroneController {
             if (isLinked() && minecraft.screen == null) {
                 PacketDistributor.sendToServer(
                         new DroneActionPayload(DroneActionPayload.ACTION_DETONATE, getLinkedId()));
+            }
+        }
+        while (KeyMappings.FOLLOW.consumeClick()) {
+            // 跟随开关不需要连线，也不需要知道无人机在哪一架 —— 服务端自己找放飞者名下的那架。
+            // 这是这个键存在的意义：玩家在别处做别的事时也能让无人机跟上或停下。
+            if (minecraft.screen == null) {
+                PacketDistributor.sendToServer(
+                        new DroneActionPayload(DroneActionPayload.ACTION_FOLLOW, -1));
             }
         }
     }
@@ -1172,7 +1224,7 @@ public final class DroneController {
         // 滚筒冲刺是唯一的例外：上限乘上 speedCapMultiplier()（冲刺时 1.15，平时 1.0）。
         // 乘在这里而不是改巡航上限，是为了让"最高速"这个事实仍然只有一个来源——
         // flightSpeed()；冲刺只是它的一个倍数。
-        double cap = cruise * speedCapMultiplier();
+        double cap = cruise * speedCapMultiplier(drone);
         double speed = drift.length();
         if (speed > cap) {
             drift = drift.scale(cap / speed);

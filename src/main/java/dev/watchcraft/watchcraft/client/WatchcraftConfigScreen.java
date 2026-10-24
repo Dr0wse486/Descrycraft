@@ -170,8 +170,11 @@ public final class WatchcraftConfigScreen extends Screen {
     private void buildFlight() {
         addDouble(WatchcraftConfig.CLIENT.flightAcceleration, "watchcraft.config.flight.acceleration", "");
         addDouble(WatchcraftConfig.CLIENT.flightDeceleration, "watchcraft.config.flight.deceleration", "");
+        addDouble(WatchcraftConfig.CLIENT.flightBankSpeedLoss, "watchcraft.config.flight.bankSpeedLoss", "");
+        addDouble(WatchcraftConfig.CLIENT.flightDiveSpeedGain, "watchcraft.config.flight.diveSpeedGain", "");
         addDouble(WatchcraftConfig.CLIENT.lookGain, "watchcraft.config.look.gain", "x");
         addDouble(WatchcraftConfig.CLIENT.lookSmoothing, "watchcraft.config.look.smoothing", "s");
+
     }
 
     private void buildView() {
@@ -191,7 +194,6 @@ public final class WatchcraftConfigScreen extends Screen {
         addInt(WatchcraftConfig.CLIENT.rollerRecoverTicks, "watchcraft.config.roll.recoverTicks", "");
         addDouble(WatchcraftConfig.CLIENT.rollCameraShare, "watchcraft.config.roll.cameraShare", "");
         addDouble(WatchcraftConfig.CLIENT.rollerTurnsPerSecond, "watchcraft.config.roll.turnsPerSecond", "");
-        addDouble(WatchcraftConfig.CLIENT.rollerDashSpeedGain, "watchcraft.config.roll.dashSpeedGain", "");
         addDouble(WatchcraftConfig.CLIENT.rollerFovGain, "watchcraft.config.roll.fovGain", "x");
     }
 

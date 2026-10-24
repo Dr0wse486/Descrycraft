@@ -42,6 +42,13 @@ public final class DroneModules {
     public static final int ALERT_RADAR = 64;
     /** Container scanner: marks chests, barrels and the like on the owner's screen. Needs {@link #RECON_BOOST}. */
     public static final int CONTAINER_MARKER = 128;
+    /**
+     * Follow package: the drone flies the owner's own trail instead of hovering where it was left.
+     *
+     * <p>It does not need {@link #RECON_BOOST}: following is about where the drone goes, not about
+     * how far it can see, so a short-sighted airframe can still keep up with you.
+     */
+    public static final int FOLLOW = 256;
 
     /**
      * Every bit this build knows about.
@@ -51,7 +58,7 @@ public final class DroneModules {
      * hand, which silently drops a new module the moment one is added - so they read this instead.
      */
     public static final int ALL = CUSTOMIZATION | ATTACK | SIGNAL_MK1 | SIGNAL_MK2 | SPEED
-            | RECON_BOOST | ALERT_RADAR | CONTAINER_MARKER;
+            | RECON_BOOST | ALERT_RADAR | CONTAINER_MARKER | FOLLOW;
 
     /**
      * The same flags, in the order they should be listed.
@@ -62,7 +69,7 @@ public final class DroneModules {
      * the same sequence the player picked them up in.
      */
     public static final int[] FLAGS = {CUSTOMIZATION, RECON_BOOST, CONTAINER_MARKER, ALERT_RADAR,
-            SIGNAL_MK1, SIGNAL_MK2, SPEED, ATTACK};
+            SIGNAL_MK1, SIGNAL_MK2, SPEED, FOLLOW, ATTACK};
 
     private DroneModules() {
     }
@@ -114,6 +121,7 @@ public final class DroneModules {
             case RECON_BOOST -> new ItemStack(ModItems.RECON_BOOST_MODULE.get());
             case ALERT_RADAR -> new ItemStack(ModItems.ALERT_RADAR_MODULE.get());
             case CONTAINER_MARKER -> new ItemStack(ModItems.CONTAINER_MARKER_MODULE.get());
+            case FOLLOW -> new ItemStack(ModItems.FOLLOW_MODULE.get());
             default -> ItemStack.EMPTY;
         };
     }

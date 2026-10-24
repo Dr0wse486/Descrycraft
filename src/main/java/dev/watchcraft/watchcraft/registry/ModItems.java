@@ -85,6 +85,16 @@ public final class ModItems {
                     DroneModules.CUSTOMIZATION | DroneModules.RECON_BOOST));
 
     /**
+     * Follow package: the drone walks the owner's trail instead of hovering where it was left.
+     *
+     * <p>Only needs the fitting bay. Following is about where the drone goes, not about how far it
+     * can see, so gating it behind {@code RECON_BOOST} would be a rule without a reason.
+     */
+    public static final DeferredItem<DroneModuleItem> FOLLOW_MODULE = ITEMS.register("follow_module",
+            () -> new DroneModuleItem(new Item.Properties().stacksTo(16),
+                    DroneModules.FOLLOW, DroneModules.CUSTOMIZATION));
+
+    /**
      * The cheap pack: a quarter of a full charge, so a quarter of the flight time.
      *
      * <p>Stackable while fresh - an absent charge component is what makes that work, since two

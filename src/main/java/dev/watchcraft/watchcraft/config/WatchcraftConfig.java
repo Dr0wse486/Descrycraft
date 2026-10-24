@@ -88,6 +88,19 @@ public final class WatchcraftConfig {
 
         public final ModConfigSpec.BooleanValue detectAlertEnabled;
         public final ModConfigSpec.IntValue detectAlertInterval;
+        public final ModConfigSpec.BooleanValue followEnabled;
+        public final ModConfigSpec.DoubleValue followDistance;
+        public final ModConfigSpec.DoubleValue followHeight;
+        public final ModConfigSpec.DoubleValue followGain;
+        public final ModConfigSpec.DoubleValue followMaxSpeed;
+        public final ModConfigSpec.DoubleValue followAccel;
+        public final ModConfigSpec.DoubleValue followTurnSmoothing;
+        public final ModConfigSpec.DoubleValue followRecallDistance;
+        public final ModConfigSpec.DoubleValue followClearance;
+        public final ModConfigSpec.IntValue followTrailLength;
+        public final ModConfigSpec.IntValue followPredictTicks;
+        public final ModConfigSpec.IntValue followPathRefreshTicks;
+        public final ModConfigSpec.IntValue followPathSamples;
 
         public final ModConfigSpec.DoubleValue bankGain;
         public final ModConfigSpec.DoubleValue maxBank;
@@ -287,6 +300,72 @@ public final class WatchcraftConfig {
                     .defineInRange("interval", 40, 10, 600);
             builder.pop();
 
+            builder.comment("跟随：无人机自己在放飞者身后飞，一边跟着走一边侦察。"
+                    + "这是「不用坐进驾驶舱也能享受标记」这条需求的落点 —— 无人机是个哨兵，"
+                    + "不是一台要人开的载具。驾驶员接管时自动暂停，松开后恢复。").push("follow");
+            followEnabled = builder
+                    .comment("放飞后是否默认进入跟随。关掉则无人机停在原地当固定哨兵")
+                    .define("enabled", true);
+            followDistance = builder
+                    .comment("跟在玩家身后的水平距离（格）。刻意不做成「一直在头顶」 —— "
+                            + "那样会挡住玩家的视野，而且看起来不像在跟随，像在吊着")
+                    .defineInRange("distance", 4.0D, 1.0D, 24.0D);
+            followHeight = builder
+                    .comment("相对玩家的高度（格）。天花板低时会自动压低，见 clearance")
+                    .defineInRange("height", 4.0D, 1.0D, 24.0D);
+            followGain = builder
+                    .comment("速度控制器的增益：离目标点每远一格，速度加多少（格/刻/格）。"
+                            + "这条曲线是跟随能不能跟上的关键 —— 恒定速度不行，"
+                            + "因为无人机的手动飞行上限 0.24 比玩家疾跑的 0.28 还慢")
+                    .defineInRange("gain", 0.08D, 0.01D, 1.0D);
+            followMaxSpeed = builder
+                    .comment("跟随的最高速度（格/刻）。必须高于 flightSpeed(0.24)，否则跟不上"
+                            + "疾跑的玩家；0.55 约合 11 m/s，能追上疾跑，但远低于冲刺的 1.45")
+                    .defineInRange("maxSpeed", 0.55D, 0.05D, 4.0D);
+            followAccel = builder
+                    .comment("速度每刻朝目标值收敛的比例，0~1。这是「跟随手感」的主要旋钮："
+                            + "调小起步与刹车都更柔，调大更跟手但会有顿挫")
+                    .defineInRange("accel", 0.25D, 0.01D, 1.0D);
+            followTurnSmoothing = builder
+                    .comment("玩家速度估算每刻的收敛比例，0~1。前瞻靠这个速度值外推，"
+                            + "所以它不能抖 —— 单帧位移里带着起步刹车的噪声，直接拿去外推会让"
+                            + "目标点一跳一跳。也别调太小，太小会让预测严重滞后，前瞻就失效了，"
+                            + "那时无人机又变回「追着屁股跑」")
+                    .defineInRange("turnSmoothing", 0.25D, 0.005D, 1.0D);
+            followRecallDistance = builder
+                    .comment("离放飞者超过这个距离就直接收回（格）。这不是常规路径而是失败检测："
+                            + "跟随时本不该拉开距离，能拉开就说明出了事 —— 传送、鞘翅、"
+                            + "卡在方块里、区块边界抖动。它顺带把「传送后横穿世界」也一并挡掉了")
+                    .defineInRange("recallDistance", 48.0D, 8.0D, 256.0D);
+            followClearance = builder
+                    .comment("与天花板的净空（格）。玩家走进洞穴或室内时，height 那个高度会落在"
+                            + "岩石里，所以要向上探一层顶，把目标高度压到天花板之下")
+                    .defineInRange("clearance", 1.5D, 0.5D, 8.0D);
+            builder.pop();
+
+            builder.comment("跟随的寻路 AI。核心思路是让无人机走玩家走过的路 —— "
+                    + "玩家已经用脚证明了那条路是通的，比任何实时寻路都可靠，"
+                    + "而且开阔地、拐角、洞穴三种场景自动都成立。").push("followPath");
+            followTrailLength = builder
+                    .comment("足迹缓冲保留多少个位置点。玩家只在真正移动时才留点，"
+                            + "所以 64 点在正常行走下大约是三到五秒的历史")
+                    .defineInRange("trailLength", 64, 8, 512);
+            followPredictTicks = builder
+                    .comment("前瞻多少刻。无人机瞄的是「玩家再走这么多刻之后会在哪」，"
+                            + "而不是玩家此刻在哪 —— 这是跟随显得聪明的关键，"
+                            + "没有它就会一直慢半拍地追着屁股跑")
+                    .defineInRange("predictTicks", 10, 0, 60);
+            followPathRefreshTicks = builder
+                    .comment("隔多少刻重算一次指引点。算一次要打十几条射线，"
+                            + "每刻都算没必要 —— 路径在几刻之内不会变")
+                    .defineInRange("refreshTicks", 3, 1, 40);
+            followPathSamples = builder
+                    .comment("每次重算最多打几条射线。沿着足迹从新往旧找「最远的、"
+                            + "视线可达的那个点」，射线数就是这条链的长度上限。"
+                            + "打得越多抄近路抄得越狠，也越贵")
+                    .defineInRange("samples", 12, 2, 64);
+            builder.pop();
+
             builder.comment("转弯倾斜（机身与镜头共用）").push("bank");
             bankGain = builder
                     .comment("每秒每刻偏航角变化带来的倾角倍率")
@@ -341,6 +420,9 @@ public final class WatchcraftConfig {
 
         public final ModConfigSpec.DoubleValue flightAcceleration;
         public final ModConfigSpec.DoubleValue flightDeceleration;
+        public final ModConfigSpec.DoubleValue flightBankSpeedLoss;
+        public final ModConfigSpec.DoubleValue flightDiveSpeedGain;
+
 
         public final ModConfigSpec.DoubleValue lookGain;
         public final ModConfigSpec.DoubleValue lookSmoothing;
@@ -397,6 +479,16 @@ public final class WatchcraftConfig {
             flightDeceleration = builder
                     .comment("松开方向键时的减速度（格/刻²）。越小滑行越远")
                     .defineInRange("deceleration", 0.020D, 0.0D, 2.0D);
+            flightBankSpeedLoss = builder
+                    .comment("转向压弯掉速：满倾角时速度上限乘 (1 - 这个值)。"
+                            + "0.25 即压满弯只剩七成半速度。这是「穿梭机手感」的一半 —— "
+                            + "平飞最快、压弯要付代价，玩家才会去挑航线而不是一路按着前")
+                    .defineInRange("bankSpeedLoss", 0.25D, 0.0D, 0.9D);
+            flightDiveSpeedGain = builder
+                    .comment("俯冲换速度：机头朝下时速度上限乘 (1 + 这个值 × 俯角/90)，"
+                            + "抬头则减。0.35 即垂直俯冲时快三成半、垂直爬升时慢三成半。"
+                            + "这是另一半 —— 高度变成可以花的东西，爬升是存能量、俯冲是取能量")
+                    .defineInRange("diveSpeedGain", 0.35D, 0.0D, 2.0D);
             builder.pop();
 
             builder.comment("鼠标转向").push("look");
