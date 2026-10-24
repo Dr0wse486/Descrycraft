@@ -215,27 +215,6 @@ public final class DroneController {
     /** 平滑后的滚筒视场角倍率，和冲刺视场角分开累加。 */
     private static double rollerFov = 1.0D;
 
-    // ------------------------------------------------------------------ 速度模块小冲刺
-
-    /**
-     * 冲刺还剩多少刻。0 表示没在冲。
-     *
-     * <p>整件事完全留在客户端，和滚筒冲刺同一个理由：它只改这一侧的速度上限与视场角，
-     * 服务端那边巡航上限依旧是 {@code flightSpeed()}，而 {@code MAX_STEP}（1.8 格/包）
-     * 比冲刺时每刻的位移宽得多，不需要为它多做一份同步状态。
-     */
-    private static int dashTicks;
-    /** 距离下一次冲刺可用还剩多少刻。 */
-    private static int dashCooldown;
-    /** 平滑后的冲刺视场角倍率，和前几档分开累加。 */
-    private static double dashFov = 1.0D;
-
-    private static double DASH_SPEED_GAIN = 1.5D;
-    private static int DASH_TICKS = 10;
-    private static int DASH_COOLDOWN_TICKS = 30;
-    private static double DASH_FOV_GAIN = 1.25D;
-    private static boolean DASH_ENABLED = true;
-
     // ------------------------------------------------------------------ 穿梭机手感
 
     /**
@@ -327,11 +306,6 @@ public final class DroneController {
         CHARGE_AIM_GAIN = client.chargeAimGain.get();
         FLIGHT_BANK_SPEED_LOSS = client.flightBankSpeedLoss.get();
         FLIGHT_DIVE_SPEED_GAIN = client.flightDiveSpeedGain.get();
-        DASH_SPEED_GAIN = client.dashSpeedGain.get();
-        DASH_TICKS = client.dashTicks.get();
-        DASH_COOLDOWN_TICKS = client.dashCooldownTicks.get();
-        DASH_FOV_GAIN = client.dashFovGain.get();
-        DASH_ENABLED = client.dashEnabled.get();
     }
 
     public static boolean isLinked() {
@@ -446,7 +420,6 @@ public final class DroneController {
         // 都要读这一帧的结果，顺序反了这一帧就会用到上一帧的冲刺状态。
         // 同时它也要排在 isCharging 分支之前，这样一次已提交的冲刺不会把滚筒卡住。
         updateRoller(minecraft, drone, sprint);
-        updateDash(drone);
 
         // A run is the server's to fly, but not the pilot's to stop aiming: the position in this
         // packet is ignored on arrival, the rotation is not. That split is the whole steering
@@ -612,18 +585,11 @@ public final class DroneController {
             rollerFov = 1.0D;
         }
 
-        // 小冲刺的视角变化。同样用冲刺那档缓动：它是一次短促的推背，进出都得快，
-        // 否则半秒的冲刺还没把视场角推开就结束了。
-        double dashTarget = dashTicks > 0 ? DASH_FOV_GAIN : 1.0D;
-        dashFov += (dashTarget - dashFov) * CHARGE_FOV_EASE;
-        if (Math.abs(dashFov - 1.0D) < 1.0E-3D) {
-            dashFov = 1.0D;
-        }
     }
 
     /** {@return the multiplier the FOV hook should apply to the projection this frame} */
     public static double viewFovScale() {
-        return chargeFov * speedFov * rollerFov * dashFov;
+        return chargeFov * speedFov * rollerFov;
     }
 
     /** {@return 滚筒冲刺是否正生效（供 HUD 显示 / 其它效果判断用）} */
@@ -643,17 +609,14 @@ public final class DroneController {
      * <p>巡航上限本身只有一个来源 —— {@code flightSpeed()}。所有「能飞更快」的情况都乘在这里，
      * 于是「最高速是多少」永远只有一处定义，而每一种加速各自是一个可以单独关掉的倍率。
      *
-     * <p>四档：滚筒冲刺（滚筒 + 冲刺键）、速度模块小冲刺、转向压弯的掉速、俯冲换速度。
-     * 前两档是主动加速，后两档是「怎么飞决定多快」—— 后者才是穿梭机手感的主体，
+     * <p>三档：滚筒冲刺（滚筒 + 冲刺键）、转向压弯的掉速、俯冲换速度。
+     * 第一档是主动加速，后两档是「怎么飞决定多快」—— 后者才是穿梭机手感的主体，
      * 因为它让高度和航线变成了有代价的选择。
      */
     public static double speedCapMultiplier(ReconDroneEntity drone) {
         double multiplier = 1.0D;
         if (rollerDashing) {
             multiplier *= 1.0D + ROLLER_DASH_SPEED_GAIN;
-        }
-        if (dashTicks > 0) {
-            multiplier *= DASH_SPEED_GAIN;
         }
         // 压弯掉速：机翼倾得越狠，迎风面越大。满倾角时剩 (1 - loss)。
         double bankRatio = Mth.clamp(
@@ -667,56 +630,6 @@ public final class DroneController {
     }
 
     // ------------------------------------------------------------------ 速度模块小冲刺
-
-    /**
-     * 请求一次小冲刺。
-     *
-     * <p>四道门：开关、冷却、模块、机体状态。全部在客户端判断，因为这一下完全活在客户端 ——
-     * 它只改本地的速度上限与视场角，服务端只看到位移仍然远在 {@code MAX_STEP} 之内。
-     *
-     * <p>模块那道门是有意的：这一下是「调速器」这个模块的主动技能，没装就没有。
-     */
-    public static void requestDash() {
-        if (!DASH_ENABLED || dashTicks > 0 || dashCooldown > 0) {
-            return;
-        }
-        if (!(Minecraft.getInstance().getCameraEntity() instanceof ReconDroneEntity drone)) {
-            return;
-        }
-        if (!drone.hasModule(DroneModules.SPEED)
-                || drone.isCharging() || drone.isRecalling() || drone.isDetonated()) {
-            return;
-        }
-        dashTicks = DASH_TICKS;
-    }
-
-    /** 推进冲刺的倒计时与冷却。冲刺中途卸掉模块会立刻中止。 */
-    private static void updateDash(ReconDroneEntity drone) {
-        if (dashCooldown > 0) {
-            dashCooldown--;
-        }
-        if (dashTicks > 0) {
-            if (!drone.hasModule(DroneModules.SPEED)) {
-                // 模块没了就没这一下。不中途掐掉的话，一个没有调速器的机体会白拿半秒加速。
-                dashTicks = 0;
-                dashCooldown = DASH_COOLDOWN_TICKS;
-                return;
-            }
-            dashTicks--;
-            if (dashTicks == 0) {
-                dashCooldown = DASH_COOLDOWN_TICKS;
-            }
-        }
-    }
-
-    public static boolean isDashing() {
-        return dashTicks > 0;
-    }
-
-    /** {@return 冲刺是否就绪，供 HUD 决定按键提示画亮还是画暗} */
-    public static boolean isDashReady() {
-        return DASH_ENABLED && dashTicks <= 0 && dashCooldown <= 0;
-    }
 
     /**
      * {@return the roll the pilot's camera should carry this frame, in degrees}
@@ -895,12 +808,6 @@ public final class DroneController {
             if (minecraft.screen == null) {
                 PacketDistributor.sendToServer(
                         new DroneActionPayload(DroneActionPayload.ACTION_FOLLOW, -1));
-            }
-        }
-        while (KeyMappings.DASH.consumeClick()) {
-            // 小冲刺。和上面那些不同，它不发包 —— 整件事都在客户端，见 requestDash 的注释。
-            if (isLinked() && minecraft.screen == null) {
-                requestDash();
             }
         }
     }
@@ -1163,11 +1070,6 @@ public final class DroneController {
         rollerNanos = 0L;
         rollerFov = 1.0D;
         speedFov = 1.0D;
-        // 冲刺状态跟着链路走。冷却刻意一并清掉：那是"这架机体刚冲过"的记录，
-        // 断链之后换一架机体不该继承上一架的冷却。
-        dashTicks = 0;
-        dashCooldown = 0;
-        dashFov = 1.0D;
     }
 
     /**
@@ -1293,11 +1195,7 @@ public final class DroneController {
         Vec3 direction = look.scale(forward)
                 .add(left.scale(strafe))
                 .add(0.0D, vertical, 0.0D);
-        if (dashTicks > 0) {
-            // 冲刺期间不看按键，直接沿视线冲出去。这是"一次前冲"而不是"加速模式" ——
-            // 可以中途转镜头改方向，但不能一边冲一边绕圈，否则它就只是又一个巡航速度了。
-            direction = look;
-        } else if (direction.lengthSqr() > 1.0D) {
+        if (direction.lengthSqr() > 1.0D) {
             // Holding a diagonal would otherwise stack past the cruise speed.
             direction = direction.normalize();
         }

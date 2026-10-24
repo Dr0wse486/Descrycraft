@@ -342,6 +342,13 @@ RADAR_MID = (226, 140, 70, 255)
 RADAR_FAR = (214, 78, 72, 255)
 
 
+# The follow board's trail. Green is the one hue the other boards leave alone - speed and recon
+# share cyan, signal is gold, chests are amber, the warhead is red - and a thin dotted line needs a
+# hue that still separates from the PCB at sixteen pixels.
+FOLLOW_TRAIL = (86, 168, 110, 255)
+FOLLOW_HEAD = (150, 232, 172, 255)
+
+
 def build_recon_boost_module_icon() -> Canvas:
     """Recon package: a view cone widening away from the sensor.
 
@@ -670,6 +677,26 @@ def build_logo() -> Canvas:
     return canvas
 
 
+def build_follow_module_icon() -> Canvas:
+    """Follow package: a dotted trail climbing the board, with a solid follower at its head.
+
+    The feature is literally "fly the path the player already walked", so the glyph is a trail and
+    not an arrow or a chain. The dots are the steps; the solid two-pixel block is the thing
+    following them. An arrow would say "go this way" - which is a different module.
+    """
+    canvas = Canvas(16, 16)
+    _module_board(canvas)
+
+    for x, y in ((3, 11), (4, 10), (6, 9), (7, 8), (9, 7), (10, 6)):
+        canvas.set(x, y, FOLLOW_TRAIL)
+
+    # The follower, two pixels square so it reads as an object rather than another dot.
+    canvas.fill(12, 4, 2, 2, FOLLOW_HEAD)
+    canvas.set(11, 5, FOLLOW_HEAD)
+
+    return canvas
+
+
 def main() -> None:
     with open(MANIFEST, encoding="utf-8") as handle:
         manifest = json.load(handle)
@@ -696,6 +723,7 @@ def main() -> None:
     write(build_recon_boost_module_icon(), "textures", "item", "recon_boost_module.png")
     write(build_container_marker_module_icon(), "textures", "item", "container_marker_module.png")
     write(build_alert_radar_module_icon(), "textures", "item", "alert_radar_module.png")
+    write(build_follow_module_icon(), "textures", "item", "follow_module.png")
 
     write(build_workbench_block(), "textures", "block", "module_workbench.png")
     write(build_workbench_gui(), "textures", "gui", "module_workbench.png")

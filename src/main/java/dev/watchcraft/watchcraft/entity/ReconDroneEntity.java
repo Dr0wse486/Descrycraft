@@ -1652,6 +1652,13 @@ public class ReconDroneEntity extends Entity {
         } else if (this.isFollowing() && pilot == null) {
             // 跟随只在没人驾驶时接管：驾驶员一接管，位置就归客户端主导了（见 handleMove），
             // 两边同时写会互相抢。松开链路之后这里自然接着跟。
+            //
+            // 模块中途被拆掉就当场停下：否则一个没有跟随板的机体还会继续跟着飞，白拿功能。
+            if (!this.hasModule(DroneModules.FOLLOW)) {
+                this.setFollowing(false);
+                this.setDeltaMovement(Vec3.ZERO);
+                return;
+            }
             this.tickFollow(serverLevel);
             // 距离超限会在里面直接收回，机体已经没了。后面的扫描与发布不必再跑。
             if (this.isRemoved()) {
@@ -1831,11 +1838,16 @@ public class ReconDroneEntity extends Entity {
         this.detectFollowStall(step, before);
         this.clampToWorld(level);
 
-        // 机头看着玩家。跟随时的朝向纯粹是观感，扫描是全向的，不依赖它。
+        // 机头水平地转向玩家，但**机身保持水平**。跟随时的朝向纯粹是观感，扫描是全向的，
+        // 不依赖它。
+        //
+        // ⚠️ 俯仰绝不能照抄"指向玩家"：机体悬在玩家上方三四格，指向玩家的向量几乎是垂直
+        // 向下的，照着它摆就会把机体立起来 —— 那是瞄准的姿态，不是四轴飞行器的姿态。
+        // 四轴平移时机身是平的，靠倾转产生推力，所以这里一律 0。
         Vec3 toOwner = ownerPos.add(0.0D, owner.getEyeHeight() * 0.5D, 0.0D).subtract(this.position());
         if (toOwner.lengthSqr() > 1.0E-4D) {
             this.setYRot(yawOf(toOwner));
-            this.setXRot(pitchOf(toOwner));
+            this.setXRot(0.0F);
         }
     }
 

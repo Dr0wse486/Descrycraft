@@ -102,7 +102,6 @@ public final class WatchcraftClient {
         event.register(KeyMappings.ROLL);
         event.register(KeyMappings.DETONATE);
         event.register(KeyMappings.FOLLOW);
-        event.register(KeyMappings.DASH);
     }
 
     private static void registerScreens(RegisterMenuScreensEvent event) {

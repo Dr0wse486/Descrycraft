@@ -674,13 +674,6 @@ public final class DroneHud {
             hints.add(new Hint("[" + key(KeyMappings.DETONATE) + "] "
                     + translate("hud.watchcraft.detonate"), HURT));
         }
-        // 小冲刺只对装了速度模块的机体显示 —— 没装就没有这个键可用，画出来只会让人按了没反应。
-        // 三档配色：冷却中暗、就绪时亮、正在冲时红，这样"能不能按"不用低头看键位。
-        if (hasSpeedModule) {
-            hints.add(new Hint("[" + key(KeyMappings.DASH) + "] " + translate("hud.watchcraft.dash"),
-                    DroneController.isDashing() ? HURT
-                            : DroneController.isDashReady() ? CYAN : TEXT_DIM));
-        }
         hints.add(new Hint("[WASD] " + translate("hud.watchcraft.move"), TEXT_DIM));
         hints.add(new Hint("[SPACE/SHIFT] " + translate("hud.watchcraft.altitude"), TEXT_DIM));
         // 滚筒亮起来的时候给它上高亮，让"现在正在滚 / 正在冲刺"这件事看得见。
