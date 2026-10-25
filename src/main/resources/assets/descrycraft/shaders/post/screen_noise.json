@@ -1,0 +1,18 @@
+{
+    "targets": [
+        "swap"
+    ],
+    "passes": [
+        {
+            "name": "descrycraft:screen_noise",
+            "intarget": "minecraft:main",
+            "outtarget": "swap",
+            "use_linear_filter": false
+        },
+        {
+            "name": "blit",
+            "intarget": "swap",
+            "outtarget": "minecraft:main"
+        }
+    ]
+}

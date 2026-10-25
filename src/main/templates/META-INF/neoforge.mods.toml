@@ -12,7 +12,7 @@ Adds a scout drone you can deploy, pilot remotely and throw to mark creatures.
 Right click to deploy, press V to link in / out, press G to throw one, R to recall.
 Fit modules at the Module Workbench to add a charge attack.
 '''
-logoFile="watchcraft.png"
+logoFile="descrycraft.png"
 
 [[dependencies.${mod_id}]]
     modId="neoforge"

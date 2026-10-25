@@ -124,8 +124,8 @@ tools/prepare_drone_model.py <source> [--install]
   │     · body → 512×512, glow → 128×128
   │
   ├─ 5. Rewrite the MTL
-  │     · six body materials all map_Kd watchcraft:entity/recon_drone
-  │     · glow material map_Kd watchcraft:entity/recon_drone_glow
+  │     · six body materials all map_Kd descrycraft:entity/recon_drone
+  │     · glow material map_Kd descrycraft:entity/recon_drone_glow
   │     · Kd from the Minecraft palette
   │
   └─ 6. Write drone_manifest.json

@@ -2,7 +2,7 @@
 
 Outputs
 -------
-src/main/resources/assets/watchcraft/sounds/tinnitus.ogg   mono, 44.1 kHz, ~1.9 s
+src/main/resources/assets/descrycraft/sounds/tinnitus.ogg   mono, 44.1 kHz, ~1.9 s
 
 Why this asset exists at all
 ----------------------------

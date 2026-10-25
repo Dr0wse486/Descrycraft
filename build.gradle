@@ -7,7 +7,7 @@ version = mod_version
 group = mod_group_id
 
 base {
-    // Output jar is named after the mod's display name, e.g. Watchcraft-1.0.0.jar
+    // Output jar is named after the mod's display name, e.g. Descrycraft-1.0.0.jar
     archivesName = mod_name
 }
 
