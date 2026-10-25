@@ -1,0 +1,149 @@
+package dev.descrycraft.descrycraft.item;
+
+import dev.descrycraft.descrycraft.registry.ModDataComponents;
+import dev.descrycraft.descrycraft.registry.ModItems;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.item.ItemStack;
+
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * The drone's loadout, as a bit mask on the drone's item stack.
+ *
+ * <p>A mask rather than a list of stacks: the drone is a single item, so there is no room for a
+ * container of fitted parts, and a mask is what makes "one of each, and only in the right order"
+ * fall out of plain arithmetic instead of a pile of special cases.
+ *
+ * <p>Every module carries one bit. Ordering is expressed by
+ * {@link DroneModuleItem#requires()} rather than by position in the mask, so adding a third module
+ * later is a new bit plus a prerequisite, and nothing else has to change.
+ */
+public final class DroneModules {
+
+    /** Fitting bay: unlocks the rest. Nothing else can be installed without it. */
+    public static final int CUSTOMIZATION = 1;
+    /** Warhead: unlocks the charge attack. */
+    public static final int ATTACK = 2;
+    /** Signal booster, first tier: thirty-two more blocks of link. */
+    public static final int SIGNAL_MK1 = 4;
+    /** Signal booster, second tier: another thirty-two. Needs {@link #SIGNAL_MK1} fitted first. */
+    public static final int SIGNAL_MK2 = 8;
+    /** Governor removal: raises the cruise ceiling to the speed module's target. */
+    public static final int SPEED = 16;
+    /**
+     * Recon package: widens the cone and the reach the drone scans with.
+     *
+     * <p>Deliberately a gate rather than a convenience: the two boards that consume what the drone
+     * sees are useless on a short-sighted airframe, so this sits in front of both of them.
+     */
+    public static final int RECON_BOOST = 32;
+    /** Radar: tells the owner when hostiles - and players - are closing in. Needs {@link #RECON_BOOST}. */
+    public static final int ALERT_RADAR = 64;
+    /** Container scanner: marks chests, barrels and the like on the owner's screen. Needs {@link #RECON_BOOST}. */
+    public static final int CONTAINER_MARKER = 128;
+    /**
+     * Follow package: the drone flies the owner's own trail instead of hovering where it was left.
+     *
+     * <p>It does not need {@link #RECON_BOOST}: following is about where the drone goes, not about
+     * how far it can see, so a short-sighted airframe can still keep up with you.
+     */
+    public static final int FOLLOW = 256;
+
+    /**
+     * Every bit this build knows about.
+     *
+     * <p>Two places need the whole set rather than one flag: the entity masks what it syncs to the
+     * client, and the drone's tooltip walks the fitted bits. Both used to spell the flags out by
+     * hand, which silently drops a new module the moment one is added - so they read this instead.
+     */
+    public static final int ALL = CUSTOMIZATION | ATTACK | SIGNAL_MK1 | SIGNAL_MK2 | SPEED
+            | RECON_BOOST | ALERT_RADAR | CONTAINER_MARKER | FOLLOW;
+
+    /**
+     * The same flags, in the order they should be listed.
+     *
+     * <p>Declaration order is not usable here - the constants are primitives and carry no order of
+     * their own - so the sequence is written out once and shared by the tooltip and the item
+     * lookup below. It matches the creative tab's order, so a drone's tooltip lists its modules in
+     * the same sequence the player picked them up in.
+     */
+    public static final int[] FLAGS = {CUSTOMIZATION, RECON_BOOST, CONTAINER_MARKER, ALERT_RADAR,
+            SIGNAL_MK1, SIGNAL_MK2, SPEED, FOLLOW, ATTACK};
+
+    private DroneModules() {
+    }
+
+    /** {@return the mask of modules fitted to the given drone stack, or zero if it is bare} */
+    public static int of(ItemStack stack) {
+        Integer mask = stack.get(ModDataComponents.DRONE_MODULES.get());
+        return mask == null ? 0 : mask;
+    }
+
+    /**
+     * Writes a mask onto a drone stack.
+     *
+     * <p>An empty mask clears the component rather than storing a zero. Two bare drones should be
+     * identical stacks - storing an explicit zero would make them differ, and stacks that differ
+     * refuse to merge in an inventory.
+     */
+    public static void set(ItemStack stack, int mask) {
+        if (mask == 0) {
+            stack.remove(ModDataComponents.DRONE_MODULES.get());
+        } else {
+            stack.set(ModDataComponents.DRONE_MODULES.get(), mask);
+        }
+    }
+
+    public static void install(ItemStack stack, int flag) {
+        set(stack, of(stack) | flag);
+    }
+
+    public static boolean has(int mask, int flag) {
+        return (mask & flag) != 0;
+    }
+
+    /** {@return a fresh recon drone item carrying the given loadout} */
+    public static ItemStack droneStack(int mask) {
+        ItemStack stack = new ItemStack(ModItems.RECON_DRONE.get());
+        set(stack, mask);
+        return stack;
+    }
+
+    /** {@return the item that installs the given single-bit flag, or an empty stack} */
+    public static ItemStack moduleStack(int flag) {
+        return switch (flag) {
+            case CUSTOMIZATION -> new ItemStack(ModItems.CUSTOMIZATION_MODULE.get());
+            case ATTACK -> new ItemStack(ModItems.ATTACK_MODULE.get());
+            case SIGNAL_MK1 -> new ItemStack(ModItems.SIGNAL_MODULE_MK1.get());
+            case SIGNAL_MK2 -> new ItemStack(ModItems.SIGNAL_MODULE_MK2.get());
+            case SPEED -> new ItemStack(ModItems.SPEED_MODULE.get());
+            case RECON_BOOST -> new ItemStack(ModItems.RECON_BOOST_MODULE.get());
+            case ALERT_RADAR -> new ItemStack(ModItems.ALERT_RADAR_MODULE.get());
+            case CONTAINER_MARKER -> new ItemStack(ModItems.CONTAINER_MARKER_MODULE.get());
+            case FOLLOW -> new ItemStack(ModItems.FOLLOW_MODULE.get());
+            default -> ItemStack.EMPTY;
+        };
+    }
+
+    /**
+     * {@return the display names of the modules in {@code mask}, in {@link #FLAGS} order}
+     *
+     * <p>Read off the module items rather than from a second set of language keys, so a new module
+     * is picked up here as soon as it is registered. Used to spell out a prerequisite on the
+     * module's own tooltip.
+     */
+    public static List<Component> names(int mask) {
+        List<Component> names = new ArrayList<>();
+        for (int flag : FLAGS) {
+            if (!has(mask, flag)) {
+                continue;
+            }
+            ItemStack module = moduleStack(flag);
+            if (!module.isEmpty()) {
+                names.add(module.getHoverName());
+            }
+        }
+        return names;
+    }
+}

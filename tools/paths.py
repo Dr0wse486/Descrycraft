@@ -18,8 +18,8 @@ import os
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 RESOURCES = os.path.join(ROOT, "src", "main", "resources")
-ASSETS = os.path.join(RESOURCES, "assets", "watchcraft")
-DATA = os.path.join(RESOURCES, "data", "watchcraft")
+ASSETS = os.path.join(RESOURCES, "assets", "descrycraft")
+DATA = os.path.join(RESOURCES, "data", "descrycraft")
 
 #: The OBJ/MTL pair that ships in the jar, plus the sheets they sample.
 MODEL_DIR = os.path.join(ASSETS, "models", "entity")

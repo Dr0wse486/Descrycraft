@@ -26,10 +26,10 @@ The drone is the reference implementation of the mod: a deployable, flyable came
 
 ## Commands
 
-- `/watchcraft doorinteract` — show whether pilot door interaction is enabled
-- `/watchcraft doorinteract true` — allow pilots to open doors, trapdoors, and fence gates
-- `/watchcraft doorinteract false` — disable pilot door interaction
-- `/watchcraft dimension` — print recorded/current dimension and the recall guard status
+- `/descrycraft doorinteract` — show whether pilot door interaction is enabled
+- `/descrycraft doorinteract true` — allow pilots to open doors, trapdoors, and fence gates
+- `/descrycraft doorinteract false` — disable pilot door interaction
+- `/descrycraft dimension` — print recorded/current dimension and the recall guard status
 
 ## Modules
 

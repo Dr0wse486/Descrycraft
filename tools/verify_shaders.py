@@ -61,7 +61,7 @@ class Report:
 
 
 def split_id(name: str) -> tuple[str, str]:
-    """``"watchcraft:radial_blur"`` -> ``("watchcraft", "radial_blur")``; a bare name means minecraft."""
+    """``"descrycraft:radial_blur"`` -> ``("descrycraft", "radial_blur")``; a bare name means minecraft."""
     if ":" in name:
         namespace, path = name.split(":", 1)
         return namespace, path

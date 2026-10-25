@@ -2,8 +2,8 @@
 
 Outputs
 -------
-src/main/resources/assets/watchcraft/sounds/drone_motor.ogg   mono, 44.1 kHz, 1.0 s, seamless loop
-src/main/resources/assets/watchcraft/sounds/drone_boom.ogg    mono, 44.1 kHz, 0.60 s
+src/main/resources/assets/descrycraft/sounds/drone_motor.ogg   mono, 44.1 kHz, 1.0 s, seamless loop
+src/main/resources/assets/descrycraft/sounds/drone_boom.ogg    mono, 44.1 kHz, 0.60 s
 
 Why these are synthesised rather than borrowed
 ----------------------------------------------

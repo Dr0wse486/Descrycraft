@@ -1,0 +1,19 @@
+{
+  "tinnitus": {
+    "subtitle": "subtitles.descrycraft.tinnitus",
+    "sounds": [
+      { "name": "descrycraft:tinnitus", "stream": false }
+    ]
+  },
+  "drone_motor": {
+    "sounds": [
+      { "name": "descrycraft:drone_motor", "stream": false }
+    ]
+  },
+  "drone_boom": {
+    "subtitle": "subtitles.descrycraft.drone_boom",
+    "sounds": [
+      { "name": "descrycraft:drone_boom", "stream": false }
+    ]
+  }
+}

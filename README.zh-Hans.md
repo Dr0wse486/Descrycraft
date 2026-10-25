@@ -1,4 +1,4 @@
-# Watchcraft
+# Descrycraft
 
 ![Minecraft](https://img.shields.io/badge/Minecraft-1.21.1-62b47a?style=flat-square)
 ![NeoForge](https://img.shields.io/badge/NeoForge-21.1.251-e8a33d?style=flat-square)
@@ -27,7 +27,7 @@
 - 模块：通过 Module Workbench 安装（Recon Boost、Container Marker、Alert Radar、Signal 等）。
 - 电池：**没装电池就没有可用画面**——画面全糊、方向无法操控，模块也一律不生效。电量附着在物品上。
 - 攻击：可选武装（一次性）；爆炸与伤害在服务端校验与处理。
-- 客户端视觉：信号模糊、HUD；着色器位于 `assets/watchcraft/shaders/`。
+- 客户端视觉：信号模糊、HUD；着色器位于 `assets/descrycraft/shaders/`。
 
 ## 默认按键（可重绑定）
 
@@ -46,8 +46,8 @@
 
 ## 命令
 
-- `/watchcraft doorinteract [true|false]` — 切换驾驶时是否能开门
-- `/watchcraft dimension` — 显示记录的/当前维度及召回守护状态
+- `/descrycraft doorinteract [true|false]` — 切换驾驶时是否能开门
+- `/descrycraft dimension` — 显示记录的/当前维度及召回守护状态
 
 ## 模块（概要）
 
@@ -80,7 +80,7 @@
 ## 资源与生成
 
 - 大部分模型与纹理由 `tools/` 下的 Python 脚本生成（仅使用标准库）。
-- 着色器为手写文件，位于 `assets/watchcraft/shaders/`（post 链与 fragment 程序）。
+- 着色器为手写文件，位于 `assets/descrycraft/shaders/`（post 链与 fragment 程序）。
 - 常用脚本：
   - `tools/generate_drone_mesh.py` — 生成 OBJ/MTL 与清单
   - `tools/prepare_drone_model.py` — 把 Blender 导出的模型转成项目资产；见
@@ -96,7 +96,7 @@
 要求：JDK 21。
 
 ```bash
-./gradlew build         # 生成 build/libs/Watchcraft-<version>.jar
+./gradlew build         # 生成 build/libs/Descrycraft-<version>.jar
 ./gradlew runClient     # 启动开发客户端
 ./gradlew runServer     # 启动开发服务端
 ```
@@ -118,12 +118,12 @@ python tools/generate_textures.py
 
 ## 项目结构（重要路径）
 
-- `src/main/java/dev/watchcraft/watchcraft/`
+- `src/main/java/dev/descrycraft/descrycraft/`
   - `entity/` — `ReconDroneEntity`、`DroneControlState`
   - `client/` — `DroneController`、`DroneHud`、`DroneSignal`、渲染与事件
   - `item/` — `ReconDroneItem`、`DroneModuleItem`、`BatteryItem`
   - `block/`、`menu/`、`network/`、`command/`、`server/`、`registry/`
-- `src/main/resources/assets/watchcraft/`
+- `src/main/resources/assets/descrycraft/`
   - `models/entity/`、`shaders/post/`、`shaders/program/`、`textures/`、`lang/`
 - `tools/` — 资产生成脚本（Python）
 - `docs/` — 设计说明

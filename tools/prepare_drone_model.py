@@ -432,7 +432,7 @@ def write_obj(path, sheet, vertices, normals, mtllib):
     normal_index = {old: new + 1 for new, old in enumerate(used_normals)}
 
     lines = [
-        "# Watchcraft recon drone - 1.0 = 1 Minecraft block, Y up, nose towards -Z",
+        "# Descrycraft recon drone - 1.0 = 1 Minecraft block, Y up, nose towards -Z",
         "# Converted from drone_hard_surface.obj by tools/prepare_drone_model.py",
         "mtllib %s" % mtllib,
         "usemtl %s" % sheet.material,
@@ -543,9 +543,9 @@ def build(source_dir, output_dir):
     write_obj(os.path.join(output_dir, "drone.obj"), body, vertices, normals, "drone.mtl")
     write_obj(os.path.join(output_dir, "drone_glow.obj"), glow, vertices, normals, "drone_glow.mtl")
     write_mtl(os.path.join(output_dir, "drone.mtl"), body.material,
-              "watchcraft:entity/recon_drone")
+              "descrycraft:entity/recon_drone")
     write_mtl(os.path.join(output_dir, "drone_glow.mtl"), glow.material,
-              "watchcraft:entity/recon_drone_glow")
+              "descrycraft:entity/recon_drone_glow")
 
     faces = []
     for sheet in (body, glow):

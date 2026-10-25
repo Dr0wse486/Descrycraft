@@ -2,12 +2,12 @@
 
 Outputs
 -------
-src/main/resources/assets/watchcraft/textures/entity/recon_drone.png      512x512 entity sheet
-src/main/resources/assets/watchcraft/textures/entity/recon_drone_glow.png 128x128 emissive sheet
-src/main/resources/assets/watchcraft/textures/item/recon_drone.png        32x32  drone icon
-src/main/resources/assets/watchcraft/textures/item/drone_chassis.png      16x16  chassis icon
-src/main/resources/assets/watchcraft/textures/item/drone_propeller.png    16x16  propeller icon
-src/main/resources/watchcraft.png                                        128x128 mod logo
+src/main/resources/assets/descrycraft/textures/entity/recon_drone.png      512x512 entity sheet
+src/main/resources/assets/descrycraft/textures/entity/recon_drone_glow.png 128x128 emissive sheet
+src/main/resources/assets/descrycraft/textures/item/recon_drone.png        32x32  drone icon
+src/main/resources/assets/descrycraft/textures/item/drone_chassis.png      16x16  chassis icon
+src/main/resources/assets/descrycraft/textures/item/drone_propeller.png    16x16  propeller icon
+src/main/resources/descrycraft.png                                        128x128 mod logo
 
 The two entity sheets are painted straight from `tools/drone_manifest.json`,
 which `generate_drone_mesh.py` writes alongside the OBJ. The manifest already
@@ -729,7 +729,7 @@ def main() -> None:
     write(build_workbench_gui(), "textures", "gui", "module_workbench.png")
 
     # The pack logo sits at the resource root, not under assets/.
-    build_logo().write_png(os.path.join(RES, "watchcraft.png"))
+    build_logo().write_png(os.path.join(RES, "descrycraft.png"))
 
 
 if __name__ == "__main__":
