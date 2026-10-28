@@ -86,13 +86,18 @@ public class DroneRenderer extends EntityRenderer<ReconDroneEntity> {
 
         int overlay = entity.getHurtTime() > 0 ? HURT_OVERLAY : OverlayTexture.NO_OVERLAY;
         var rig = DroneRig.of(entity, partialTick);
+        // A charge has armed the warhead and a detonation is already counting down, so both show
+        // the alarm sheet. Everything else stays on the cyan running lights.
+        var glowLookup = entity.isCharging() || entity.isDetonated()
+                ? DroneMeshes.GLOW_RED_LOOKUP
+                : DroneMeshes.GLOW_LOOKUP;
 
         body.render(poseStack, buffer, DroneMeshes.BODY_LOOKUP, packedLight, overlay, partialTick, rig);
         // The lens and tail lamp use the additive emissive type, which samples no lightmap, so
         // both of these arguments are inert - the light stays on at noon and at midnight alike,
         // and the hurt overlay does not reach it. They are still passed because they state the
         // intent, and because they are what would be correct if the type ever changed back.
-        glow.render(poseStack, buffer, DroneMeshes.GLOW_LOOKUP,
+        glow.render(poseStack, buffer, glowLookup,
                 LightTexture.FULL_BRIGHT, overlay, partialTick, rig);
 
         poseStack.popPose();

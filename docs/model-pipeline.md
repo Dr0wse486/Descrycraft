@@ -126,6 +126,7 @@ tools/prepare_drone_model.py <source> [--install]
   ├─ 5. Rewrite the MTL
   │     · six body materials all map_Kd descrycraft:entity/recon_drone
   │     · glow material map_Kd descrycraft:entity/recon_drone_glow
+  │     · the alarm sheet reuses the same UVs with a red palette
   │     · Kd from the Minecraft palette
   │
   └─ 6. Write drone_manifest.json
@@ -144,7 +145,7 @@ Java barely moves:
 |---|---|
 | `DroneMeshes` | `ANIMATED` → `Rotor_FL/FR/RL/RR` + `Gimbal_Lens`; paths unchanged |
 | `DroneRig` | Four rotor pivots plus the gimbal pivot (§5) |
-| `DroneRenderer` | `MODEL_Y` 0.225 → **0.2113**. Yaw/pitch/bank signs need no change — rotation is baked into the OBJ |
+| `DroneRenderer` | `MODEL_Y` 0.225 → **0.2113**. Yaw/pitch/bank signs need no change — rotation is baked into the OBJ. Also swaps the emissive lookup to the red sheet while charging or detonated |
 | `ReconDroneEntity` | Override `getBoundingBoxForCulling()` to widen it (model 1.037 wide, AABB 0.8) |
 | `generate_textures.py` | Read the manifest — same code, 260 faces becomes 6899 |
 
@@ -165,16 +166,21 @@ animated, and `Nose_Lamp` is **authored in the converter** on the 13° slope und
 
 ⇒ **512×512 body, 128×128 glow** — a factor of two to spare, and the same sizes already in the
 repo. Both live in the manifest (`sheet`, `glow_sheet`) so generator and preview cannot drift.
+The charge/detonation sheet (`recon_drone_glow_red.png`) is a palette swap on the glow rectangles,
+so switching to it at draw time changes only the emissive colour, not the UVs.
 
 ### What the atlas looks like
 
-Untextured by design (procedural PBR). The Minecraft equivalent is **one rectangle per face, one
-colour, slight brightness jitter** — faces are flat, normals do the shading, the texture only says
-what colour this face is. ≥ 4 px gets a 1 px darker outline (a chamfer); ≥ 6 px gets two or three
-rivet dots; colour is palette ±4% per face, or 4675 faces collapse into one flat grey.
+One rectangle per face, but no longer a single flat colour. The body sheet bakes the face normal
+into a directional shade (key from above the front-left, weak fill opposite, narrow sheen) and
+lifts the palette so the dark hull still reads against a dark backdrop. Rectangles of 8×8 px or
+more also get a one pixel seam and a brighter top-left bevel; 10×10 px or more get both. Smaller
+faces stay flat on purpose — 86% of the sheet is under 8×8, and an inset border there reads as a
+grid of boxes. The emissive sheet stays flat: it is drawn additively with no lighting.
 
-⚠️ The rectangle must stay **flat**. Outlines or noise drawn *inside* it turn the airframe into a
-black grid — every face samples its rectangle at the same scale.
+⚠️ Detail is painted from the face's own rect and shaded colour, never from sheet coordinates. A
+hand-placed pattern breaks the mirroring between left and right faces and drifts as soon as a face
+is re-packed.
 
 ### Alternative A: real UV unwrapping
 

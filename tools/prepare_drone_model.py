@@ -558,6 +558,7 @@ def build(source_dir, output_dir):
                 "name": face["name"],
                 "rect": face["rect"],
                 "colour": face["colour"],
+                "normal": [round(c, 4) for c in face["_normal"]],
                 "glow": face["glow"],
             })
     # Both sheets contribute parts, and the glow faces live inside Drone_Body, so the same

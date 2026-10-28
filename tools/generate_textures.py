@@ -4,15 +4,19 @@ Outputs
 -------
 src/main/resources/assets/descrycraft/textures/entity/recon_drone.png      512x512 entity sheet
 src/main/resources/assets/descrycraft/textures/entity/recon_drone_glow.png 128x128 emissive sheet
+src/main/resources/assets/descrycraft/textures/entity/recon_drone_glow_red.png
+                                                                          128x128 charge/detonation sheet
 src/main/resources/assets/descrycraft/textures/item/recon_drone.png        32x32  drone icon
 src/main/resources/assets/descrycraft/textures/item/drone_chassis.png      16x16  chassis icon
 src/main/resources/assets/descrycraft/textures/item/drone_propeller.png    16x16  propeller icon
 src/main/resources/descrycraft.png                                        128x128 mod logo
 
-The two entity sheets are painted straight from `tools/drone_manifest.json`,
+All three entity sheets are painted straight from `tools/drone_manifest.json`,
 which `generate_drone_mesh.py` writes alongside the OBJ. The manifest already
 holds the UV rectangle of every face, so the texture is packed by exactly the
-same code that packed the mesh: there is no second layout to keep in sync.
+same code that packed the mesh: there is no second layout to keep in sync. The
+red sheet is the same rectangles with the emissive palette swapped, so the two
+glow states can be switched at draw time without rebaking the mesh.
 
 Run:  python tools/generate_textures.py
 """
@@ -20,6 +24,7 @@ Run:  python tools/generate_textures.py
 from __future__ import annotations
 
 import json
+import math
 import os
 import struct
 import sys
@@ -58,6 +63,13 @@ CYAN_DEEP = rgba("CYAN_DEEP")
 GLASS = rgba("GLASS")
 AMBER = rgba("AMBER")
 
+# The charge/detonation glow. Same layout as the blue sheet, only the emissive
+# materials change: the running lights go alarm red, and the amber nose lamp
+# burns hotter so it still separates from the bars behind it.
+GLOW_RED = (255, 42, 30, 255)
+GLOW_RED_DEEP = (176, 14, 10, 255)
+GLOW_RED_HOT = (255, 112, 48, 255)
+
 CLEAR = (0, 0, 0, 0)
 # Crafting parts. The chassis shows the redstone core it is built around; the propeller is bare
 # steel so it reads as a machined part rather than as a finished drone. These are not part of the
@@ -70,6 +82,97 @@ BOLT = (86, 94, 104, 255)
 
 # Manifest colour name -> RGBA, for every name the generator can emit.
 MANIFEST_COLOURS = {name: tuple(rgb) + (255,) for name, rgb in PALETTE.items()}
+
+# The red sheet is a palette swap, not a second layout. Every emissive face in
+# the manifest is CYAN or AMBER today; the deep cyan entry is included so an
+# accent added to the mesh later cannot silently stay blue in alarm state.
+RED_MANIFEST_COLOURS = dict(MANIFEST_COLOURS)
+RED_MANIFEST_COLOURS.update({
+    "CYAN": GLOW_RED,
+    "CYAN_DEEP": GLOW_RED_DEEP,
+    "AMBER": GLOW_RED_HOT,
+})
+
+
+# The airframe sheet is *not* painted from the UI palette above. Two things separate it:
+#
+# 1. The values are two or three steps lighter. `PALETTE` is tuned for 16 px icons, where dark
+#    graphite reads as "dark"; on a three block wide airframe the same values flattened the whole
+#    hull into one silhouette as soon as the lightmap was not at full noon.
+# 2. Every face is multiplied by a shade derived from its own normal. The entity shader has no
+#    directional term for the mesh normals, so a flat sheet throws away the 6,675 facets that give
+#    the model its shape. The bake puts that information back into the texels, which is the only
+#    place the entity pipeline will read it from.
+#
+# The bake is deterministic and depends only on the normal, so mirrored faces get mirrored shade
+# and the model stays symmetric. That is the difference between this and the hand placed noise that
+# was removed earlier: that noise keyed on absolute sheet coordinates and broke the mirroring.
+BODY_PALETTE = {
+    "HULL_DARK": (52, 58, 66),
+    "HULL_MID": (70, 78, 88),
+    "HULL_PANEL": (94, 103, 114),
+    "HULL_LIGHT": (154, 165, 178),
+    "PANEL_LINE": (35, 39, 45),
+    "BLADE": (178, 187, 198),
+    "BLADE_DARK": (112, 121, 132),
+    "GLASS": (48, 66, 86),
+}
+
+BODY_COLOURS = {name: tuple(rgb) + (255,) for name, rgb in BODY_PALETTE.items()}
+
+# A fixed studio key, aimed from above the front-left. The fill is weak and comes from the
+# opposite side, which is what keeps the shaded faces from collapsing to black; the sheen narrows
+# the key into a highlight band, standing in for the roughness response the real material gets
+# from the Blender renderer. All vectors are in model space (Y up, nose towards -Z).
+BAKE_KEY = (-0.5, 0.8, -0.35)
+BAKE_FILL = (0.55, -0.15, 0.65)
+BAKE_AMBIENT = 0.72
+BAKE_KEY_GAIN = 0.34
+BAKE_FILL_GAIN = 0.10
+BAKE_SHEEN_GAIN = 0.14
+BAKE_SHEEN_POWER = 6.0
+BAKE_SKY = 0.08
+BAKE_GROUND = 0.04
+
+
+def _unit(vector):
+    length = math.sqrt(sum(component * component for component in vector)) or 1.0
+    return tuple(component / length for component in vector)
+
+
+KEY = _unit(BAKE_KEY)
+FILL = _unit(BAKE_FILL)
+
+
+def face_shade(normal):
+    """Brightness multiplier for one face, baked from its normal.
+
+    The sky/ground bias is deliberately small. Its job is to keep top plates a touch brighter than
+    the vertical sides even when the key is grazing, not to replace the key: a strong up bias would
+    flatten everything into a height map and lose the left/right facet separation that makes the
+    hard surface read.
+    """
+    nx, ny, nz = normal
+    lambert = max(0.0, nx * KEY[0] + ny * KEY[1] + nz * KEY[2])
+    fill = max(0.0, nx * FILL[0] + ny * FILL[1] + nz * FILL[2])
+    sheen = lambert ** BAKE_SHEEN_POWER
+    shade = (BAKE_AMBIENT
+             + BAKE_SKY * max(ny, 0.0)
+             - BAKE_GROUND * max(-ny, 0.0)
+             + BAKE_KEY_GAIN * lambert
+             + BAKE_FILL_GAIN * fill
+             + BAKE_SHEEN_GAIN * sheen)
+    # The ceiling keeps HULL_LIGHT and BLADE from clipping to white where the key and the sheen
+    # overlap; the floor keeps the underside from going to a black cut-out in a dim cave.
+    return min(1.32, max(0.56, shade))
+
+
+def shade_colour(colour, shade):
+    r, g, b, a = colour
+    return (min(255, int(round(r * shade))),
+            min(255, int(round(g * shade))),
+            min(255, int(round(b * shade))),
+            a)
 
 
 class Canvas:
@@ -117,38 +220,61 @@ class Canvas:
 
 
 # --------------------------------------------------------------------------- entity sheets
-def build_entity_sheet(manifest, glow: bool) -> Canvas:
-    """Paints a sheet straight from the manifest: one flat colour per face.
+def build_entity_sheet(manifest, glow: bool, red: bool = False) -> Canvas:
+    """Paints a sheet straight from the manifest: one rectangle per face.
 
-    Every face still gets its own UV rectangle, but at this face count nothing may be painted
-    *inside* one. The hard-surface model has 6675 body faces, and the rectangles that hold them
-    are tiny - 86% are smaller than 5x5 pixels, and the commonest sizes are 4x3, 2x1 and 1x1. Two
-    earlier passes both broke on that:
+    The body rectangles are shaded by their face normals (see ``face_shade``). This is what makes
+    the README preview and the in-game model show the hard surface's contour at all: the entity
+    shader supplies the lightmap but no directional term, so a flat sheet is a silhouette no matter
+    how much geometry it has. The emissive sheet deliberately stays flat - it is composited with
+    ``RenderType#eyes`` and no lighting, so baking shade into it would only make the lights dimmer.
 
-    * A one pixel inset border per rectangle was meant to meet along physical edges and read as a
-      panel line. On a 2x2 rectangle the border is three quarters of the face, so instead of panel
-      lines the hull became a grid of dark boxes.
-    * Per pixel value jitter meant to read as hand made pixel art was keyed on absolute sheet
-      coordinates, so all 6675 faces got a different random shade and every mirrored pair differed.
-      That is the other half of why the underside looked asymmetric: the geometry mirrors, the
-      noise did not.
+    Every face gets its own UV rectangle, but at this face count nothing may be painted *inside*
+    one. The hard-surface model has 6,675 body faces and 86% of their rectangles are smaller than
+    5x5 pixels, with 4x3, 2x1 and 1x1 the common sizes. An inset border reads as a grid of dark
+    boxes and per-pixel noise keyed on absolute sheet coordinates breaks the mirrored pairs; both
+    were tried and removed. Per-face shading is the one treatment that survives the rectangle
+    sizes, because it is constant across the rectangle and derived from the geometry rather than
+    from sheet coordinates.
 
-    Both are gone. The sheet is flat colour per material, and the model's own 6893 facets supply
-    every edge and highlight - which is the right division of labour for a hard surface mesh that
-    already has more geometry than the old procedural one had by a factor of twenty six.
+    Rectangles cannot bleed into their neighbours: both render types this sheet feeds sample with
+    blur and mipmaps off - ``RenderType#entityCutout`` and ``RenderType#eyes`` are each built on
+    ``TextureStateShard(texture, false, false)``.
 
-    Flat rectangles cannot bleed into their neighbours, because both render types this sheet feeds
-    sample with blur and mipmaps off: {@code RenderType#entityCutout} and {@code RenderType#eyes}
-    are each built on {@code TextureStateShard(texture, false, false)}.
+    When ``red`` is set the glow rectangles are painted from the alarm palette instead. The
+    geometry and the UVs do not change, so switching sheets at draw time only changes the colour
+    of the emissive pass.
     """
     size = manifest["glow_sheet"] if glow else manifest["sheet"]
     canvas = Canvas(size[0], size[1])
+    colours = RED_MANIFEST_COLOURS if red else MANIFEST_COLOURS
     for face in manifest["faces"]:
         if face["glow"] != glow:
             continue
         x, y, w, h = face["rect"]
-        colour = MANIFEST_COLOURS.get(face["colour"], (255, 0, 255, 255))
+        if glow:
+            colour = colours.get(face["colour"], (255, 0, 255, 255))
+        else:
+            colour = BODY_COLOURS.get(face["colour"], (255, 0, 255, 255))
+            normal = face.get("normal")
+            if normal is not None:
+                colour = shade_colour(colour, face_shade(normal))
         canvas.fill(x, y, w, h, colour)
+        # Large flat plates get a one pixel seam and a top-left bevel. The
+        # small rectangles (86% of the sheet) cannot carry this: an inset
+        # border there reads as a grid of boxes, so the treatment is gated on
+        # size rather than applied to every face. This is painted from the
+        # face's own rect and shade, not from sheet coordinates, so mirrored
+        # geometry keeps matching seams.
+        if not glow and w >= 8 and h >= 8:
+            seam = shade_colour(colour, 0.84)
+            canvas.outline(x, y, w, h, seam)
+            if w >= 10 and h >= 10:
+                bevel = shade_colour(colour, 1.06)
+                for xx in range(x + 1, x + w - 1):
+                    canvas.set(xx, y + 1, bevel)
+                for yy in range(y + 1, y + h - 1):
+                    canvas.set(x + 1, yy, bevel)
     return canvas
 
 
@@ -708,6 +834,8 @@ def main() -> None:
         os.path.join(paths.TEXTURE_DIR, "entity", "recon_drone.png"))
     build_entity_sheet(manifest, glow=True).write_png(
         os.path.join(paths.TEXTURE_DIR, "entity", "recon_drone_glow.png"))
+    build_entity_sheet(manifest, glow=True, red=True).write_png(
+        os.path.join(paths.TEXTURE_DIR, "entity", "recon_drone_glow_red.png"))
 
     write(build_item_icon(), "textures", "item", "recon_drone.png")
     write(build_chassis_icon(), "textures", "item", "drone_chassis.png")

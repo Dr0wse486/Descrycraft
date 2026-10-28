@@ -12,6 +12,13 @@
 
 ![无人机预览](docs/drone-preview.png)
 
+巡航灯为青色。武装上膛与自爆倒计时期间，全部发光件切换到红色警报贴图：
+
+<p align="center">
+  <img src="docs/drone-preview-blue.png" alt="巡航灯，青色" width="49%">
+  <img src="docs/drone-preview-red.png" alt="冲刺与自爆，红色" width="49%">
+</p>
+
 ## 快速概览
 
 - **侦查无人机** — 可驾驶的远程相机，带链距约束（已发布）。
@@ -146,7 +153,8 @@ python tools/generate_textures.py
 
 - [`docs/model-pipeline.md`](docs/model-pipeline.md) — Blender 导出如何变成这架机体
 - [`docs/recipes.md`](docs/recipes.md) — 玩家向的配方与物品说明
-- `docs/drone-preview.png`、`docs/drone-uv-layout.png` — 预览图与纹理图集
+- `docs/drone-preview.png`、`docs/drone-preview-blue.png`、`docs/drone-preview-red.png` — 棚拍四视图与两种发光状态
+- `docs/drone-uv-layout.png` — 纹理图集
 
 ## 许可证
 
