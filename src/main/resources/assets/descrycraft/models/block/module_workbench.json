@@ -1,6 +1,12 @@
 {
-  "parent": "minecraft:block/cube_all",
+  "parent": "minecraft:block/cube",
   "textures": {
-    "all": "descrycraft:block/module_workbench"
+    "particle": "descrycraft:block/module_workbench_top",
+    "up": "descrycraft:block/module_workbench_top",
+    "down": "descrycraft:block/module_workbench_bottom",
+    "north": "descrycraft:block/module_workbench_front",
+    "south": "descrycraft:block/module_workbench_back",
+    "west": "descrycraft:block/module_workbench_left",
+    "east": "descrycraft:block/module_workbench_right"
   }
 }
