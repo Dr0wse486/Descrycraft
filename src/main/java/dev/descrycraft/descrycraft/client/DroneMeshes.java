@@ -75,6 +75,7 @@ public final class DroneMeshes implements ResourceManagerReloadListener {
     /** Paths are relative to {@code assets/descrycraft/}, with no {@code textures/} prefix. */
     private static final ResourceLocation BODY_TEXTURE = id("entity/recon_drone");
     private static final ResourceLocation GLOW_TEXTURE = id("entity/recon_drone_glow");
+    private static final ResourceLocation RED_GLOW_TEXTURE = id("entity/recon_drone_glow_red");
 
     /**
      * The OBJ groups {@link DroneRig} animates. A missing group is not fatal - the transform is
@@ -95,6 +96,14 @@ public final class DroneMeshes implements ResourceManagerReloadListener {
      * the motor rings, is never drawn at all.
      */
     public static final ITextureRenderTypeLookup GLOW_LOOKUP = RenderType::eyes;
+
+    /**
+     * The same additive type against the alarm-red sheet. The lookup ignores the texture baked
+     * into the mesh and substitutes {@link #RED_GLOW_TEXTURE}, so a charge or detonation can
+     * recolour the emissive pass without a second bake or a second copy of the geometry.
+     */
+    public static final ITextureRenderTypeLookup GLOW_RED_LOOKUP =
+            texture -> RenderType.eyes(RED_GLOW_TEXTURE);
 
     private CompositeRenderable body;
     private CompositeRenderable glow;

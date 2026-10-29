@@ -13,6 +13,14 @@ recon drone. This README is about the drone, the reference implementation.
 
 ![The drone, four views](docs/drone-preview.png)
 
+Running lights are cyan. Arming the warhead and the detonation countdown switch every emissive
+part to the red alarm sheet:
+
+<p align="center">
+  <img src="docs/drone-preview-blue.png" alt="Running lights, cyan" width="49%">
+  <img src="docs/drone-preview-red.png" alt="Sprint and detonation, red" width="49%">
+</p>
+
 ## Quick overview
 
 - **Recon drone** — a flyable remote camera with a leash (shipped).
@@ -154,7 +162,9 @@ When adding a module, add its bit to `DroneModules.ALL` — otherwise it is stri
 
 - [`docs/model-pipeline.md`](docs/model-pipeline.md) — how a Blender export becomes the airframe
 - [`docs/recipes.md`](docs/recipes.md) — player-facing recipes and item reference
-- `docs/drone-preview.png`, `docs/drone-uv-layout.png` — preview and texture atlas
+- `docs/drone-preview.png`, `docs/drone-preview-blue.png`, `docs/drone-preview-red.png` — studio
+  sheet and the two emissive states
+- `docs/drone-uv-layout.png` — texture atlas
 
 ## License
 

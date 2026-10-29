@@ -70,7 +70,7 @@ def write_png(path, width, height, rows):
 
 # ------------------------------------------------------------------- texture
 
-def build_sheet(manifest, glow):
+def build_sheet(manifest, glow, red=False):
     """Paints a sheet exactly the way the game's texture generator does.
 
     This used to carry its own copy of the painting loop, with a one pixel inset border at a
@@ -80,7 +80,7 @@ def build_sheet(manifest, glow):
     disagreed with the only thing it exists to predict. It now calls the real painter, and the two
     cannot drift again.
     """
-    canvas = generate_textures.build_entity_sheet(manifest, glow)
+    canvas = generate_textures.build_entity_sheet(manifest, glow, red)
     return [bytes(channel for r, g, b, _ in row for channel in (r, g, b)) for row in canvas.px]
 
 
@@ -88,9 +88,9 @@ def sheet_size(manifest, glow):
     return tuple(manifest["glow_sheet"] if glow else manifest["sheet"])
 
 
-def load_texture(manifest, glow, scale):
+def load_texture(manifest, glow, scale, red=False):
     """Builds the sheet at 1:1 and returns (pixels, width, height) upscaled."""
-    rows = build_sheet(manifest, glow)
+    rows = build_sheet(manifest, glow, red)
     width, height = sheet_size(manifest, glow)
     pixels = [bytes(r) for r in rows]
     if scale > 1:
@@ -194,7 +194,31 @@ class View:
         return sx, sy, z
 
 
-LIGHT = unit((-0.45, 0.82, 0.36))
+# Studio lighting for the preview. The key comes from above the front-left, which is what makes
+# the nose and the arm tops read; the old light sat *behind* the airframe, so the front views came
+# out as a dark cut-out. Fill from the rear-right keeps the shaded sides from going black, and the
+# narrow specular lobe stands in for the roughness term of the Blender material.
+KEY_LIGHT = unit((-0.5, 0.8, -0.35))
+FILL_LIGHT = unit((0.55, -0.15, 0.65))
+AMBIENT = 1.00
+KEY_GAIN = 0.26
+FILL_GAIN = 0.12
+SPECULAR_GAIN = 0.20
+SPECULAR_POWER = 28.0
+
+
+def surface_shade(world_n, view_dir):
+    """Lighting response on top of the pre-shaded sheet.
+
+    The sheet already carries a soft directional bake (see ``generate_textures.py``), so this is
+    deliberately an ambient-heavy response rather than a second full key light: two stacked
+    diffuse terms would crush the underside back to the silhouette the old preview had.
+    """
+    lambert = max(0.0, dot(world_n, KEY_LIGHT))
+    fill = max(0.0, dot(world_n, FILL_LIGHT))
+    halfway = unit(tuple(KEY_LIGHT[i] + view_dir[i] for i in range(3)))
+    specular = max(0.0, dot(world_n, halfway)) ** SPECULAR_POWER
+    return AMBIENT + KEY_GAIN * lambert + FILL_GAIN * fill + SPECULAR_GAIN * specular
 
 
 def render(faces, textures, view, backdrop):
@@ -258,9 +282,9 @@ def render(faces, textures, view, backdrop):
             # that has no lightmap term to scale by.
             shade = 1.0
         else:
-            lambert = max(0.0, dot(world_n, LIGHT))
-            rim = max(0.0, -world_n[1]) * 0.12
-            shade = 0.30 + 0.62 * lambert + rim
+            centroid_world = tuple(sum(p[i] for p in world) / len(world) for i in range(3))
+            view_dir = unit(sub(view.eye, centroid_world))
+            shade = surface_shade(world_n, view_dir)
 
         # quads arrive as quads; the prism caps arrive as triangles
         triangles = ((0, 1, 2),) if len(screen) == 3 else ((0, 1, 2), (0, 2, 3))
@@ -335,6 +359,27 @@ def render(faces, textures, view, backdrop):
     return rows
 
 
+def downsample(rows, width, factor):
+    height = len(rows) // factor
+    out_width = width // factor
+    out = []
+    for oy in range(height):
+        row = bytearray()
+        for ox in range(out_width):
+            r = g = b = 0
+            for sy in range(factor):
+                src = rows[oy * factor + sy]
+                for sx in range(factor):
+                    i = (ox * factor + sx) * 3
+                    r += src[i]
+                    g += src[i + 1]
+                    b += src[i + 2]
+            n = factor * factor
+            row += bytes((r // n, g // n, b // n))
+        out.append(row)
+    return out
+
+
 def main():
     model_dir = paths.model_dir(sys.argv[1] if len(sys.argv) > 1 else None)
     out_dir = os.path.abspath(sys.argv[2]) if len(sys.argv) > 2 else paths.PREVIEW_OUT
@@ -352,15 +397,16 @@ def main():
     vertices = body_verts + glow_verts
 
     # texture sheets, straight from the manifest
-    body_tex = load_texture(manifest, False, 1)
-    glow_tex = load_texture(manifest, True, 1)
+    red = "--red" in sys.argv
+    body_tex = load_texture(manifest, False, 1, red)
+    glow_tex = load_texture(manifest, True, 1, red)
     # The emissive parts are on the glow sheet, at its own resolution. Every face has to be
     # sampled from the sheet its UVs were packed against, or the glow parts come out black.
     textures = {False: body_tex, True: glow_tex}
     write_png(os.path.join(out_dir, "drone-texture.png"), body_tex[1], body_tex[2],
-              build_sheet(manifest, False))
+              build_sheet(manifest, False, red))
     write_png(os.path.join(out_dir, "drone-glow.png"), glow_tex[1], glow_tex[2],
-              build_sheet(manifest, True))
+              build_sheet(manifest, True, red))
 
     low = [min(v[i] for v in vertices) for i in range(3)]
     high = [max(v[i] for v in vertices) for i in range(3)]
@@ -370,6 +416,11 @@ def main():
           % (low, high, high[0] - low[0], high[1] - low[1], high[2] - low[2]))
 
     cell = 420
+    # Supersample and box filter. The rasteriser has hard pixel edges; without
+    # this the README and the blue/red game previews show stair-stepped rotor
+    # tips and arm silhouettes no matter how clean the mesh is.
+    ss = 2
+    render_size = cell * ss
     scale = 1.0 / span * 1.85
     # Frame on the bounding sphere, not the widest axis: the corners of a
     # square model reach sqrt(2) further out than the edges do.
@@ -393,9 +444,9 @@ def main():
                -distance * math.cos(el) * math.cos(az))
         eye = tuple(eye[i] + centre[i] * scale for i in range(3))
         target = tuple(c * scale for c in centre)
-        view = View(eye, target, (0.0, 1.0, 0.0), fov, cell, cell, scale)
+        view = View(eye, target, (0.0, 1.0, 0.0), fov, render_size, render_size, scale)
         rows = render(faces, textures, view, backdrop)
-        tiles.append((label, rows))
+        tiles.append((label, downsample(rows, render_size, ss)))
         print("rendered %s" % label)
 
     # stitch into a 2x2 sheet with one-pixel gutters
