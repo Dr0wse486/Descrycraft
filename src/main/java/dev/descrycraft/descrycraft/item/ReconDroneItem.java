@@ -1,7 +1,9 @@
 package dev.descrycraft.descrycraft.item;
 
+import dev.descrycraft.descrycraft.client.DroneLoadoutScreen;
 import dev.descrycraft.descrycraft.entity.ReconDroneEntity;
-import dev.descrycraft.descrycraft.registry.ModDataComponents;import dev.descrycraft.descrycraft.registry.ModEntities;
+import dev.descrycraft.descrycraft.registry.ModDataComponents;
+import dev.descrycraft.descrycraft.registry.ModEntities;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -133,6 +135,10 @@ public class ReconDroneItem extends Item {
      *
      * <p>拆电池不走这里了：拆的位置在**已经放出去的那架**身上（潜行 + 手持电池右键机体），
      * 这里只负责把电带上。
+     *
+     * <p>界面只在客户端开，服务端这一侧什么都不做。{@code level.isClientSide} 在专用服务器上
+     * 恒为 false，所以那句对客户端类的引用在服务端永远不会被解析 —— 方法体里的符号引用是
+     * 懒解析的，不会在类加载时把 {@code DroneLoadoutScreen} 拖进服务端。
      */
     private static void sneakAction(Level level, Player player, InteractionHand hand) {
         ItemStack battery = batteryInOtherHand(player, hand);
@@ -141,6 +147,9 @@ public class ReconDroneItem extends Item {
                 fitBattery(player, player.getItemInHand(hand), battery);
             }
             return;
+        }
+        if (level.isClientSide) {
+            DroneLoadoutScreen.open(player, hand);
         }
     }
 
@@ -187,6 +196,7 @@ public class ReconDroneItem extends Item {
                 .withStyle(ChatFormatting.GRAY));
 
         int mask = DroneModules.of(stack);
+        int active = DroneModules.activeOf(stack);
         ItemStack battery = batteryOf(stack);
         if (mask == 0 && battery.isEmpty()) {
             tooltip.add(Component.translatable("tooltip.descrycraft.no_modules")
@@ -202,11 +212,15 @@ public class ReconDroneItem extends Item {
                     continue;
                 }
                 ItemStack module = DroneModules.moduleStack(bit);
-                if (!module.isEmpty()) {
-                    tooltip.add(Component.literal("  ")
-                            .append(module.getHoverName())
-                            .withStyle(ChatFormatting.AQUA));
+                if (module.isEmpty()) {
+                    continue;
                 }
+                // 装着的模块全都列出来，关掉的那些用灰色 —— 玩家在物品栏里就能看出哪些件
+                // 只是没通电，而不是根本没装。名字仍然取自模块物品本身。
+                boolean on = DroneModules.has(active, bit);
+                tooltip.add(Component.literal("  ")
+                        .append(module.getHoverName())
+                        .withStyle(on ? ChatFormatting.AQUA : ChatFormatting.DARK_GRAY));
             }
         }
 

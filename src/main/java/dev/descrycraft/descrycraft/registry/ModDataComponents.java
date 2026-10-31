@@ -64,6 +64,20 @@ public final class ModDataComponents {
                             .networkSynchronized(ItemStack.OPTIONAL_STREAM_CODEC)
                             .build());
 
+    /**
+     * Modules that are fitted but switched off at the loadout screen.
+     *
+     * <p>Separate from {@link #DRONE_MODULES} rather than one mask with the off bits cleared: the
+     * bench has to keep refusing a second copy of a module that is merely idle, so "fitted" and
+     * "running" are two questions. Absent means nothing is switched off.
+     */
+    public static final DeferredHolder<DataComponentType<?>, DataComponentType<Integer>> DRONE_MODULES_OFF =
+            DATA_COMPONENTS.register("drone_modules_off",
+                    () -> DataComponentType.<Integer>builder()
+                            .persistent(Codec.INT)
+                            .networkSynchronized(ByteBufCodecs.VAR_INT)
+                            .build());
+
     private ModDataComponents() {
     }
 }

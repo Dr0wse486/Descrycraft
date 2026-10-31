@@ -81,6 +81,24 @@ public final class DroneModules {
     }
 
     /**
+     * {@return the fitted modules switched off at the loadout screen}
+     *
+     * <p>Kept apart from {@link #of} rather than folded into it: "fitted" and "running" are two
+     * different questions. The bench must still refuse a second copy of a module that is merely
+     * switched off, and the screen must be able to show a part that is present but idle. Only
+     * {@link #activeOf} folds the two together, and that is what gameplay reads.
+     */
+    public static int offOf(ItemStack stack) {
+        Integer mask = stack.get(ModDataComponents.DRONE_MODULES_OFF.get());
+        return mask == null ? 0 : mask;
+    }
+
+    /** {@return the modules actually running: fitted, minus the ones switched off} */
+    public static int activeOf(ItemStack stack) {
+        return of(stack) & ~offOf(stack);
+    }
+
+    /**
      * Writes a mask onto a drone stack.
      *
      * <p>An empty mask clears the component rather than storing a zero. Two bare drones should be
@@ -97,6 +115,15 @@ public final class DroneModules {
 
     public static void install(ItemStack stack, int flag) {
         set(stack, of(stack) | flag);
+    }
+
+    /** Writes the switched-off mask; zero clears the component, for the same reason as {@link #set}. */
+    public static void setOff(ItemStack stack, int mask) {
+        if (mask == 0) {
+            stack.remove(ModDataComponents.DRONE_MODULES_OFF.get());
+        } else {
+            stack.set(ModDataComponents.DRONE_MODULES_OFF.get(), mask & ALL);
+        }
     }
 
     public static boolean has(int mask, int flag) {
@@ -124,6 +151,49 @@ public final class DroneModules {
             case FOLLOW -> new ItemStack(ModItems.FOLLOW_MODULE.get());
             default -> ItemStack.EMPTY;
         };
+    }
+
+    /**
+     * {@return the bits {@code flag} requires before it may run}
+     *
+     * <p>Read off the module item, so the prerequisite table stays in one place - the same
+     * {@link DroneModuleItem#requires()} the bench uses to gate installation.
+     */
+    public static int requiresOf(int flag) {
+        ItemStack module = moduleStack(flag);
+        return module.getItem() instanceof DroneModuleItem board ? board.requires() : 0;
+    }
+
+    /** {@return whether every prerequisite of {@code flag} is present in {@code active}} */
+    public static boolean isSatisfied(int active, int flag) {
+        int need = requiresOf(flag);
+        return (active & need) == need;
+    }
+
+    /**
+     * Switches modules off until every remaining one has its prerequisites met.
+     *
+     * <p>Turning off a prerequisite has to take its dependants with it, or the mask would describe
+     * a state the game cannot run - a signal booster II with no booster I under it. Rather than
+     * refusing the click, the dependants are switched off too and the screen shows them greyed
+     * out: the player can see exactly what a part was holding up.
+     *
+     * @return the mask with every unsatisfiable module cleared
+     */
+    public static int pruneUnsatisfied(int active) {
+        int result = active;
+        boolean changed = true;
+        while (changed) {
+            changed = false;
+            for (int flag : FLAGS) {
+                if (!has(result, flag) || isSatisfied(result, flag)) {
+                    continue;
+                }
+                result &= ~flag;
+                changed = true;
+            }
+        }
+        return result;
     }
 
     /**
