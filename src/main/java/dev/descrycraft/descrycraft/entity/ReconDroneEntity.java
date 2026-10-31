@@ -513,6 +513,15 @@ public class ReconDroneEntity extends Entity {
             SynchedEntityData.defineId(ReconDroneEntity.class, EntityDataSerializers.INT);
 
     /**
+     * The subset of {@link #DATA_MODULES} switched off at the loadout screen.
+     *
+     * <p>Synced for the same reason as the mask itself: the client computes link range, speed and
+     * scan reach from it, and it has to agree with the server without an extra packet.
+     */
+    private static final EntityDataAccessor<Integer> DATA_MODULES_OFF =
+            SynchedEntityData.defineId(ReconDroneEntity.class, EntityDataSerializers.INT);
+
+    /**
      * Whether the drone is currently committed to an attack run.
      *
      * <p>Synced because both sides change behaviour on it: the pilot's client hands control of the
@@ -833,6 +842,7 @@ public class ReconDroneEntity extends Entity {
         builder.define(DATA_MARKS, 0);
         builder.define(DATA_HEALTH, MAX_HEALTH);
         builder.define(DATA_MODULES, 0);
+        builder.define(DATA_MODULES_OFF, 0);
         builder.define(DATA_CHARGING, false);
         // The axis is only meaningful while a run is up, but it is defined unconditionally so the
         // client always has a value to clamp against rather than a null to guard.
@@ -854,6 +864,7 @@ public class ReconDroneEntity extends Entity {
         this.setHealth(tag.contains("Health") ? tag.getFloat("Health") : MAX_HEALTH);
         // And it keeps whatever was bolted to it.
         this.setModules(tag.getInt("Modules"));
+        this.setModulesOff(tag.getInt("ModulesOff"));
         // The pack, with however much charge was left in it.
         if (tag.contains("Battery")) {
             ItemStack.parse(this.registryAccess(), tag.get("Battery")).ifPresent(this::setBattery);
@@ -871,6 +882,7 @@ public class ReconDroneEntity extends Entity {
         tag.putBoolean("Thrown", this.thrown);
         tag.putFloat("Health", this.getHealth());
         tag.putInt("Modules", this.getModules());
+        tag.putInt("ModulesOff", this.getModulesOff());
         ItemStack battery = this.getBattery();
         if (!battery.isEmpty()) {
             tag.put("Battery", battery.save(this.registryAccess()));
@@ -959,7 +971,16 @@ public class ReconDroneEntity extends Entity {
         }
         // 装了不等于在跑：改装界面上关掉的模块仍然算"已装"（工作台据此拒绝重复安装），
         // 但游戏逻辑一律按"已装且未关"来判，所以整个模组只有这一处需要合并两个掩码。
-        return DroneModules.has(this.getModules(), flag);
+        return DroneModules.has(this.getModules() & ~this.getModulesOff(), flag);
+    }
+
+    /** {@return the fitted modules currently switched off} */
+    public int getModulesOff() {
+        return this.entityData.get(DATA_MODULES_OFF);
+    }
+
+    public void setModulesOff(int mask) {
+        this.entityData.set(DATA_MODULES_OFF, mask & DroneModules.ALL);
     }
 
     /**
@@ -1125,6 +1146,7 @@ public class ReconDroneEntity extends Entity {
      */
     public ItemStack toStack() {
         ItemStack stack = DroneModules.droneStack(this.getModules());
+        DroneModules.setOff(stack, this.getModulesOff());
         ReconDroneItem.setBattery(stack, this.getBattery());
         return stack;
     }
@@ -2892,10 +2914,15 @@ public class ReconDroneEntity extends Entity {
         // 玩家明明"手持电池"，无人机却被收走了。物品那条路径（ReconDroneItem#use）从一开始
         // 就查的是"另一只手"，实体这条路径漏了，两边不一致。
         ItemStack held = batteryInEitherHand(player, hand);
-        if (held.isEmpty()) {
+        if (!held.isEmpty()) {
+            this.toggleBattery(player, held);
+        } else if (player.getMainHandItem().isEmpty() && player.getOffhandItem().isEmpty()) {
             this.pickUp(player);
         } else {
-            this.toggleBattery(player, held);
+            // 手里拿着东西却不是电池 —— 多半是拿错了（石墨电极最像）。
+            // 以前这里直接回收整机，玩家会以为"右键把它弄没了"，所以改成只给提示。
+            player.displayClientMessage(
+                    Component.translatable("message.descrycraft.recall_needs_empty_hand"), true);
         }
         return InteractionResult.CONSUME;
     }
@@ -3002,6 +3029,7 @@ public class ReconDroneEntity extends Entity {
         drone.moveTo(spawn.x, spawn.y, spawn.z, player.getYRot(), player.getXRot());
         drone.setOwner(player);
         drone.setModules(DroneModules.of(stack));
+        drone.setModulesOff(DroneModules.offOf(stack));
         drone.setBattery(ReconDroneItem.batteryOf(stack));
         drone.setDeltaMovement(look.scale(THROW_SPEED).add(0.0D, 0.06D, 0.0D));
         drone.markThrown();

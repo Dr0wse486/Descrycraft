@@ -59,6 +59,8 @@ public final class ModNetwork {
         PayloadRegistrar registrar = event.registrar("1");
         registrar.playToServer(DroneActionPayload.TYPE, DroneActionPayload.STREAM_CODEC, ModNetwork::handleAction);
         registrar.playToServer(DroneMovePayload.TYPE, DroneMovePayload.STREAM_CODEC, ModNetwork::handleMove);
+        registrar.playToServer(DroneLoadoutPayload.TYPE, DroneLoadoutPayload.STREAM_CODEC,
+                ModNetwork::handleLoadout);
 
         if (FMLEnvironment.dist == Dist.DEDICATED_SERVER) {
             registrar.playToClient(DroneLinkPayload.TYPE, DroneLinkPayload.STREAM_CODEC, ModNetwork::ignore);
@@ -95,6 +97,52 @@ public final class ModNetwork {
                 && !drone.isDetonated()
                 ? drone
                 : null;
+    }
+
+    /**
+     * 改装界面上的一次开关。
+     *
+     * <p>客户端只发「翻哪一位、要开还是要关」，掩码由这里重算 —— 见
+     * {@link DroneLoadoutPayload} 的说明。规则和界面那一侧是同一套
+     * （{@code DroneModules#isSatisfied} / {@code #pruneUnsatisfied}），所以两边算出来的
+     * 结果一致，客户端那个只是预演。
+     */
+    private static void handleLoadout(DroneLoadoutPayload payload, IPayloadContext context) {
+        if (!(context.player() instanceof ServerPlayer player)) {
+            return;
+        }
+        InteractionHand hand = payload.offHand() ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND;
+        ItemStack stack = player.getItemInHand(hand);
+        if (!stack.is(ModItems.RECON_DRONE.get())) {
+            return;
+        }
+
+        int installed = DroneModules.of(stack);
+        int flag = payload.flag();
+        // 只接受「装着的、单独的一位」。多位的值没有任何一次点击会产生它。
+        if (Integer.bitCount(flag) != 1 || !DroneModules.has(installed, flag)) {
+            return;
+        }
+        // 客制化模块是这整个界面的门槛，关掉它界面本身也就没意义了 —— 界面上那颗开关是死的，
+        // 这里是同一个决定的另一半。
+        if (flag == DroneModules.CUSTOMIZATION) {
+            return;
+        }
+
+        int active = DroneModules.activeOf(stack);
+        if (payload.enabled()) {
+            // 前置没满足就不许开。界面上那颗开关本来就是灰的，这一条是防改包。
+            if (!DroneModules.isSatisfied(active | flag, flag)) {
+                return;
+            }
+            active |= flag;
+        } else {
+            active &= ~flag;
+        }
+        // 关掉一个前置要连它的下游一起关，否则掩码会描述出一个跑不起来的配装。
+        active = DroneModules.pruneUnsatisfied(active);
+        DroneModules.setOff(stack, installed & ~active);
+        player.containerMenu.broadcastChanges();
     }
 
     private static void handleAction(DroneActionPayload payload, IPayloadContext context) {
