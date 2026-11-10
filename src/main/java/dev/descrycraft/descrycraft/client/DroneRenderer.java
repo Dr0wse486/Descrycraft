@@ -64,9 +64,9 @@ public class DroneRenderer extends EntityRenderer<ReconDroneEntity> {
     @Override
     public void render(ReconDroneEntity entity, float entityYaw, float partialTick, PoseStack poseStack,
                        MultiBufferSource buffer, int packedLight) {
-        var body = DroneMeshes.body();
-        var glow = DroneMeshes.glow();
-        if (body == null || glow == null) {
+        // Null for the first few frames while the OBJ parse and bake run on a worker thread.
+        var meshes = DroneMeshes.meshes();
+        if (meshes == null) {
             return;
         }
 
@@ -92,12 +92,12 @@ public class DroneRenderer extends EntityRenderer<ReconDroneEntity> {
                 ? DroneMeshes.GLOW_RED_LOOKUP
                 : DroneMeshes.GLOW_LOOKUP;
 
-        body.render(poseStack, buffer, DroneMeshes.BODY_LOOKUP, packedLight, overlay, partialTick, rig);
+        meshes.body().render(poseStack, buffer, DroneMeshes.BODY_LOOKUP, packedLight, overlay, partialTick, rig);
         // The lens and tail lamp use the additive emissive type, which samples no lightmap, so
         // both of these arguments are inert - the light stays on at noon and at midnight alike,
         // and the hurt overlay does not reach it. They are still passed because they state the
         // intent, and because they are what would be correct if the type ever changed back.
-        glow.render(poseStack, buffer, glowLookup,
+        meshes.glow().render(poseStack, buffer, glowLookup,
                 LightTexture.FULL_BRIGHT, overlay, partialTick, rig);
 
         poseStack.popPose();

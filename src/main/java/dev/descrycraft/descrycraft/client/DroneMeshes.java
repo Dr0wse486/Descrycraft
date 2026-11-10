@@ -5,6 +5,7 @@ import com.mojang.logging.LogUtils;
 import dev.descrycraft.descrycraft.Descrycraft;
 import java.util.HashSet;
 import java.util.Set;
+import net.minecraft.Util;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.resources.model.Material;
 import net.minecraft.resources.ResourceLocation;
@@ -105,53 +106,106 @@ public final class DroneMeshes implements ResourceManagerReloadListener {
     public static final ITextureRenderTypeLookup GLOW_RED_LOOKUP =
             texture -> RenderType.eyes(RED_GLOW_TEXTURE);
 
-    private CompositeRenderable body;
-    private CompositeRenderable glow;
-    private boolean failed;
+    /** A fully baked pair: the lit airframe and the emissive parts. */
+    public record Meshes(CompositeRenderable body, CompositeRenderable glow) {
+    }
+
+    /** Guards the bookkeeping below; the meshes themselves are published through {@link #meshes}. */
+    private final Object lock = new Object();
+    /** Bumped on every reload, so a load that finishes after one is thrown away. */
+    private int generation;
+    /** Whether a load is in flight. */
+    private boolean loading;
+    /** Published as one value, so the renderer never sees the body without the glow. */
+    private volatile Meshes meshes;
+    /** Latched when a load throws, so a broken mesh does not retry (and log) every frame. */
+    private volatile boolean failed;
 
     private DroneMeshes() {}
 
     /**
-     * Drops the baked meshes so the next frame re-reads the OBJ and MTL files.
+     * Drops the baked meshes and starts loading them again on a background thread.
      *
      * <p>{@code failed} is cleared too: a reload is exactly the moment at which a mesh that failed
      * to parse might have been fixed.
      */
     @Override
     public void onResourceManagerReload(ResourceManager resourceManager) {
-        body = null;
-        glow = null;
-        failed = false;
+        synchronized (lock) {
+            generation++;
+            meshes = null;
+            failed = false;
+            loading = false;
+        }
+        // Start at once: a reload happens while the world is still loading, so the parse and the
+        // bake are normally finished before the drone can first come into view.
+        ensureLoaded();
     }
 
     private static ResourceLocation id(String path) {
         return ResourceLocation.fromNamespaceAndPath(NAMESPACE, path);
     }
 
-    public static CompositeRenderable body() {
-        ensureLoaded();
-        return INSTANCE.body;
+    /**
+     * {@return the baked meshes, or {@code null} while the background load has not finished}
+     *
+     * <p>Also kicks the load off if it has not started yet - the reload listener normally does
+     * that, but a failed start is retried here rather than left for a reload that may never come.
+     */
+    public static Meshes meshes() {
+        INSTANCE.ensureLoaded();
+        return INSTANCE.meshes;
     }
 
-    public static CompositeRenderable glow() {
-        ensureLoaded();
-        return INSTANCE.glow;
+    /** {@return whether a full bake is available for callers that cannot draw a partial one} */
+    public static boolean isReady() {
+        return meshes() != null;
     }
 
-    private static void ensureLoaded() {
-        if ((INSTANCE.body != null && INSTANCE.glow != null) || INSTANCE.failed) {
-            return;
+    private void ensureLoaded() {
+        int startedFor;
+        synchronized (lock) {
+            if (loading || failed || meshes != null) {
+                return;
+            }
+            loading = true;
+            startedFor = generation;
         }
+        Util.backgroundExecutor().execute(() -> load(startedFor));
+    }
+
+    /**
+     * Parses and bakes both meshes off the render thread.
+     *
+     * <p>It is roughly half a second of work - the airframe alone is 1.1 MB of OBJ and 6,675
+     * quads - plus the class loading that comes with the OBJ loader. On the render thread that
+     * landed as a one-second freeze on the first frame the drone was visible, which read as "the
+     * inventory takes a second to open" whenever that frame happened to be the one behind a menu.
+     * Baking it here moves the cost to a worker, and the drone simply stays out of frame for the
+     * handful of frames it takes.
+     */
+    private void load(int startedFor) {
+        Meshes baked = null;
         try {
             ObjModel bodyModel = loadModel("drone.obj");
             ObjModel glowModel = loadModel("drone_glow.obj");
-            INSTANCE.body = bake(bodyModel, BODY_TEXTURE);
-            INSTANCE.glow = bake(glowModel, GLOW_TEXTURE);
+            baked = new Meshes(bake(bodyModel, BODY_TEXTURE), bake(glowModel, GLOW_TEXTURE));
             reportMissingParts(bodyModel, glowModel);
         } catch (Exception error) {
             // One failed load should cost us the drone, not the frame.
-            INSTANCE.failed = true;
             LOGGER.error("Could not load the Recon Drone meshes; the drone will not render", error);
+        }
+        synchronized (lock) {
+            if (startedFor != generation) {
+                // A reload ran while this load was in flight and already owns the state.
+                return;
+            }
+            loading = false;
+            if (baked == null) {
+                failed = true;
+            } else {
+                meshes = baked;
+            }
         }
     }
 
