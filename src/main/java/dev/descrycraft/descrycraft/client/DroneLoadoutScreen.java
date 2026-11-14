@@ -729,6 +729,13 @@ public class DroneLoadoutScreen extends Screen {
         if (size <= 0.0F) {
             return;
         }
+        // The meshes are parsed and baked on a worker thread. Until that lands there is nothing to
+        // bake: keep the bake pending and try again next frame, instead of latching the every-frame
+        // fallback path for the rest of the session the way a failed bake would.
+        if (!this.bakeFailed && !DroneMeshes.isReady()) {
+            this.bakeDirty = true;
+            return;
+        }
         int x1 = this.boxX();
         int y1 = this.boxY();
         float scale = BOX * 0.72F / size;
